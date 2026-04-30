@@ -7,13 +7,16 @@ type Media =
   | { type: "image"; src: string }
   | { type: "video"; src: string; poster?: string };
 
+type Role = "anchor" | "hero" | "regular";
+
 type Memory = {
   id: string;
-  x: number; // world-space px
+  x: number;
   y: number;
   title: string;
   caption: string;
   tone: Tone;
+  role: Role;
   media?: Media;
 };
 
@@ -21,125 +24,136 @@ const WORLD_W = 1900;
 const WORLD_H = 1200;
 const DRAG_THRESHOLD = 10;
 
-// Soft yellow halo — every memory node glows like a star, regardless of tone.
-const STAR_RING_INNER = "hsl(48 100% 88%)";
-const STAR_RING_GLOW = "hsl(48 95% 72% / 0.55)";
-const STAR_RING_FAR = "hsl(48 95% 65% / 0.35)";
+// Zoom constraints — pinch on mobile, also used by double-tap focus.
+const MIN_SCALE = 0.6;
+const MAX_SCALE = 2.4;
+const DOUBLE_TAP_MS = 280;
+const DOUBLE_TAP_DIST = 30;
 
-// 32 memories in 6 clusters + 1 video anchor at center.
-// Edit titles/captions/photos freely. Tone is now visual-only (kept for future
-// theming) — shadows are uniformly star-yellow regardless of tone.
+// Inertia tuning — "floaty & languid" (Apple Maps feel).
+const FRICTION = 0.95;        // higher = floatier (Twitter ~0.88, Maps ~0.95)
+const MIN_VELOCITY = 0.05;    // px/frame — below this, motion stops
+const VELOCITY_WINDOW_MS = 100;
+
+// Direct-drag follow-tightness (lerp factor toward target).
+// Mobile feels muddy at 0.12, so we run snappier for touch.
+const LERP_DESKTOP = 0.12;
+const LERP_TOUCH = 0.20;
+
+// Rubber-band resistance when dragging past world edges.
+// 0 = hard wall, 1 = no resistance. ~0.55 feels native.
+const OVERDRAG_RESISTANCE = 0.55;
+const RUBBERBAND_RETURN = 0.18; // lerp speed when snapping back from over-drag
+
+const TONE_HALO: Record<Tone, { inner: string; glow: string; far: string }> = {
+  sky: {
+    inner: "hsl(48 100% 88%)",
+    glow:  "hsl(50 95% 75% / 0.55)",
+    far:   "hsl(195 80% 70% / 0.30)",
+  },
+  moss: {
+    inner: "hsl(50 100% 88%)",
+    glow:  "hsl(50 90% 72% / 0.50)",
+    far:   "hsl(150 60% 55% / 0.30)",
+  },
+  peach: {
+    inner: "hsl(48 100% 90%)",
+    glow:  "hsl(38 95% 72% / 0.55)",
+    far:   "hsl(28 85% 60% / 0.32)",
+  },
+};
+
+const ROLE_HALO_SCALE: Record<Role, { ring: number; glow: number; far: number; size: number; opacity: number }> = {
+  anchor:  { ring: 1.4, glow: 1.6, far: 1.6, size: 1.15, opacity: 1.0 },
+  hero:    { ring: 1.15, glow: 1.2, far: 1.2, size: 1.0, opacity: 1.0 },
+  regular: { ring: 1.0, glow: 0.8, far: 0.7, size: 0.85, opacity: 0.85 },
+};
+
+const HEROES = new Set(["m5", "m7", "m12", "m19", "m24", "m29"]);
+
 const memories: Memory[] = [
   // NW cluster
-  { id: "m1",  x: 230,  y: 170,  title: "First snow",      caption: "the morning everything went quiet", tone: "sky",
-    media: { type: "image", src: "/memories/IMG_0121.jpeg" } },
-  { id: "m2",  x: 360,  y: 150,  title: "Sunday tea",      caption: "the kettle and the long talk",      tone: "peach",
-    media: { type: "image", src: "/memories/IMG_0137.jpeg" } },
-  { id: "m3",  x: 200,  y: 270,  title: "Window light",    caption: "afternoon, no plans",                tone: "peach",
-    media: { type: "image", src: "/memories/IMG_0327.jpeg" } },
-  { id: "m4",  x: 340,  y: 280,  title: "Late calls",      caption: "midnight, laughing",                 tone: "sky",
-    media: { type: "image", src: "/memories/IMG_1092.jpeg" } },
-  { id: "m5",  x: 470,  y: 200,  title: "Lavender",        caption: "the field at dusk",                  tone: "moss",
-    media: { type: "image", src: "/memories/IMG_1214.jpeg" } },
+  { id: "m1",  x: 230,  y: 170,  title: "First snow",      caption: "the morning everything went quiet", tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_0121.jpeg" } },
+  { id: "m2",  x: 360,  y: 150,  title: "Sunday tea",      caption: "the kettle and the long talk",      tone: "peach", role: "regular", media: { type: "image", src: "/memories/IMG_0137.jpeg" } },
+  { id: "m3",  x: 200,  y: 270,  title: "Window light",    caption: "afternoon, no plans",                tone: "peach", role: "regular", media: { type: "image", src: "/memories/IMG_0327.jpeg" } },
+  { id: "m4",  x: 340,  y: 280,  title: "Late calls",      caption: "midnight, laughing",                 tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_1092.jpeg" } },
+  { id: "m5",  x: 470,  y: 200,  title: "Lavender",        caption: "the field at dusk",                  tone: "moss",  role: "hero",    media: { type: "image", src: "/memories/IMG_1214.jpeg" } },
 
   // N cluster
-  { id: "m6",  x: 800,  y: 150,  title: "Train rides",     caption: "windows, hours, snacks",             tone: "sky",
-    media: { type: "image", src: "/memories/IMG_1250.jpeg" } },
-  { id: "m7",  x: 940,  y: 130,  title: "Candles",         caption: "every year, every wish",             tone: "peach",
-    media: { type: "image", src: "/memories/IMG_1261.jpeg" } },
-  { id: "m8",  x: 1060, y: 180,  title: "Tide pools",      caption: "barefoot, salt-bright",              tone: "sky",
-    media: { type: "image", src: "/memories/IMG_1286.jpeg" } },
-  { id: "m9",  x: 870,  y: 260,  title: "December",        caption: "the cold and the tinsel",            tone: "sky",
-    media: { type: "image", src: "/memories/IMG_1440.jpeg" } },
-  { id: "m10", x: 1020, y: 280,  title: "Stars",           caption: "looking up, naming none",            tone: "moss",
-    media: { type: "image", src: "/memories/IMG_1534.jpeg" } },
+  { id: "m6",  x: 800,  y: 150,  title: "Train rides",     caption: "windows, hours, snacks",             tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_1250.jpeg" } },
+  { id: "m7",  x: 940,  y: 130,  title: "Candles",         caption: "every year, every wish",             tone: "peach", role: "hero",    media: { type: "image", src: "/memories/IMG_1261.jpeg" } },
+  { id: "m8",  x: 1060, y: 180,  title: "Tide pools",      caption: "barefoot, salt-bright",              tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_1286.jpeg" } },
+  { id: "m9",  x: 870,  y: 260,  title: "December",        caption: "the cold and the tinsel",            tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_1440.jpeg" } },
+  { id: "m10", x: 1020, y: 280,  title: "Stars",           caption: "looking up, naming none",            tone: "moss",  role: "regular", media: { type: "image", src: "/memories/IMG_1534.jpeg" } },
 
   // NE cluster
-  { id: "m11", x: 1450, y: 160,  title: "Saturday market", caption: "flowers, cheese, sun",               tone: "peach",
-    media: { type: "image", src: "/memories/IMG_2445.jpeg" } },
-  { id: "m12", x: 1600, y: 150,  title: "Lake afternoon",  caption: "green water, slow boat",             tone: "moss",
-    media: { type: "image", src: "/memories/IMG_2454.jpeg" } },
-  { id: "m13", x: 1730, y: 200,  title: "Orange jacket",   caption: "you, every winter",                  tone: "peach",
-    media: { type: "image", src: "/memories/IMG_2465.jpeg" } },
-  { id: "m14", x: 1490, y: 280,  title: "Vienna",          caption: "coffee, cobblestones, snow",         tone: "sky",
-    media: { type: "image", src: "/memories/IMG_2554.jpeg" } },
-  { id: "m15", x: 1660, y: 290,  title: "Birthday",        caption: "today.",                             tone: "peach",
-    media: { type: "image", src: "/memories/IMG_3466.jpeg" } },
+  { id: "m11", x: 1450, y: 160,  title: "Saturday market", caption: "flowers, cheese, sun",               tone: "peach", role: "regular", media: { type: "image", src: "/memories/IMG_2445.jpeg" } },
+  { id: "m12", x: 1600, y: 150,  title: "Lake afternoon",  caption: "green water, slow boat",             tone: "moss",  role: "hero",    media: { type: "image", src: "/memories/IMG_2454.jpeg" } },
+  { id: "m13", x: 1730, y: 200,  title: "Orange jacket",   caption: "you, every winter",                  tone: "peach", role: "regular", media: { type: "image", src: "/memories/IMG_2465.jpeg" } },
+  { id: "m14", x: 1490, y: 280,  title: "Vienna",          caption: "coffee, cobblestones, snow",         tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_2554.jpeg" } },
+  { id: "m15", x: 1660, y: 290,  title: "Birthday",        caption: "today.",                             tone: "peach", role: "regular", media: { type: "image", src: "/memories/IMG_3466.jpeg" } },
 
   // Anchor — video at center
-  { id: "m16", x: 950,  y: 600,  title: "Mossgate",        caption: "where it all begins",                tone: "moss",
-    media: { type: "video", src: "/memories/IMG_3468.mov" } },
+  { id: "m16", x: 950,  y: 600,  title: "Mossgate",        caption: "where it all begins",                tone: "moss",  role: "anchor",  media: { type: "video", src: "/memories/IMG_3468.mov" } },
 
   // SW cluster
-  { id: "m17", x: 220,  y: 820,  title: "Kitchen radio",   caption: "old songs, hot stove",               tone: "peach",
-    media: { type: "image", src: "/memories/IMG_3764.jpeg" } },
-  { id: "m18", x: 380,  y: 800,  title: "First trip",      caption: "the airport, your laugh",            tone: "sky",
-    media: { type: "image", src: "/memories/IMG_4603.jpeg" } },
-  { id: "m19", x: 280,  y: 920,  title: "Long walks",      caption: "no destination",                     tone: "moss",
-    media: { type: "image", src: "/memories/IMG_4650.jpeg" } },
-  { id: "m20", x: 440,  y: 940,  title: "Late library",    caption: "stacks, soft yellow",                tone: "peach",
-    media: { type: "image", src: "/memories/IMG_4671.jpeg" } },
-  { id: "m21", x: 180,  y: 1010, title: "The river",       caption: "stones and silence",                 tone: "sky",
-    media: { type: "image", src: "/memories/IMG_4749.jpeg" } },
+  { id: "m17", x: 220,  y: 820,  title: "Kitchen radio",   caption: "old songs, hot stove",               tone: "peach", role: "regular", media: { type: "image", src: "/memories/IMG_3764.jpeg" } },
+  { id: "m18", x: 380,  y: 800,  title: "First trip",      caption: "the airport, your laugh",            tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_4603.jpeg" } },
+  { id: "m19", x: 280,  y: 920,  title: "Long walks",      caption: "no destination",                     tone: "moss",  role: "hero",    media: { type: "image", src: "/memories/IMG_4650.jpeg" } },
+  { id: "m20", x: 440,  y: 940,  title: "Late library",    caption: "stacks, soft yellow",                tone: "peach", role: "regular", media: { type: "image", src: "/memories/IMG_4671.jpeg" } },
+  { id: "m21", x: 180,  y: 1010, title: "The river",       caption: "stones and silence",                 tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_4749.jpeg" } },
 
   // S cluster
-  { id: "m22", x: 830,  y: 870,  title: "Old road",        caption: "the long way home",                  tone: "moss",
-    media: { type: "image", src: "/memories/IMG_5951.jpeg" } },
-  { id: "m23", x: 970,  y: 860,  title: "Yellow umbrella", caption: "sudden rain, no hurry",              tone: "peach",
-    media: { type: "image", src: "/memories/IMG_5992.JPG" } },
-  { id: "m24", x: 1090, y: 910,  title: "Ferry day",       caption: "wind in everyone's hair",            tone: "sky",
-    media: { type: "image", src: "/memories/IMG_7733.jpeg" } },
-  { id: "m25", x: 880,  y: 990,  title: "Paper notes",     caption: "drawn on napkins",                   tone: "peach",
-    media: { type: "image", src: "/memories/IMG_7811.jpeg" } },
-  { id: "m26", x: 1030, y: 1020, title: "Bonfire",         caption: "the sparks like words",              tone: "moss",
-    media: { type: "image", src: "/memories/IMG_7922.jpeg" } },
-  { id: "m27", x: 1160, y: 990,  title: "The garden",      caption: "the one with the bench",             tone: "moss",
-    media: { type: "image", src: "/memories/c78ccaf7-5e56-48a4-9cb1-b761c2e68db6.jpg" } },
+  { id: "m22", x: 830,  y: 870,  title: "Old road",        caption: "the long way home",                  tone: "moss",  role: "regular", media: { type: "image", src: "/memories/IMG_5951.jpeg" } },
+  { id: "m23", x: 970,  y: 860,  title: "Yellow umbrella", caption: "sudden rain, no hurry",              tone: "peach", role: "regular", media: { type: "image", src: "/memories/IMG_5992.JPG" } },
+  { id: "m24", x: 1090, y: 910,  title: "Ferry day",       caption: "wind in everyone's hair",            tone: "sky",   role: "hero",    media: { type: "image", src: "/memories/IMG_7733.jpeg" } },
+  { id: "m25", x: 880,  y: 990,  title: "Paper notes",     caption: "drawn on napkins",                   tone: "peach", role: "regular", media: { type: "image", src: "/memories/IMG_7811.jpeg" } },
+  { id: "m26", x: 1030, y: 1020, title: "Bonfire",         caption: "the sparks like words",              tone: "moss",  role: "regular", media: { type: "image", src: "/memories/IMG_7922.jpeg" } },
+  { id: "m27", x: 1160, y: 990,  title: "The garden",      caption: "the one with the bench",             tone: "moss",  role: "regular", media: { type: "image", src: "/memories/c78ccaf7-5e56-48a4-9cb1-b761c2e68db6.jpg" } },
 
   // SE cluster
-  { id: "m28", x: 1480, y: 820,  title: "Sunday paint",    caption: "tiny canvases, tiny disasters",      tone: "peach",
-    media: { type: "image", src: "/memories/IMG_7943.jpeg" } },
-  { id: "m29", x: 1620, y: 820,  title: "Slow morning",    caption: "coffee, two pages",                  tone: "sky",
-    media: { type: "image", src: "/memories/IMG_7956.jpeg" } },
-  { id: "m30", x: 1740, y: 920,  title: "The dog years",   caption: "muddy, perfect",                     tone: "moss",
-    media: { type: "image", src: "/memories/IMG_8450.jpeg" } },
-  { id: "m31", x: 1520, y: 970,  title: "Last summer",     caption: "the longest light",                  tone: "sky",
-    media: { type: "image", src: "/memories/IMG_8500.jpeg" } },
-  { id: "m32", x: 1680, y: 1010, title: "Tonight",         caption: "this one, right now",                tone: "peach",
-    media: { type: "image", src: "/memories/IMG_8884.jpeg" } },
+  { id: "m28", x: 1480, y: 820,  title: "Sunday paint",    caption: "tiny canvases, tiny disasters",      tone: "peach", role: "regular", media: { type: "image", src: "/memories/IMG_7943.jpeg" } },
+  { id: "m29", x: 1620, y: 820,  title: "Slow morning",    caption: "coffee, two pages",                  tone: "sky",   role: "hero",    media: { type: "image", src: "/memories/IMG_7956.jpeg" } },
+  { id: "m30", x: 1740, y: 920,  title: "The dog years",   caption: "muddy, perfect",                     tone: "moss",  role: "regular", media: { type: "image", src: "/memories/IMG_8450.jpeg" } },
+  { id: "m31", x: 1520, y: 970,  title: "Last summer",     caption: "the longest light",                  tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_8500.jpeg" } },
+  { id: "m32", x: 1680, y: 1010, title: "Tonight",         caption: "this one, right now",                tone: "peach", role: "regular", media: { type: "image", src: "/memories/IMG_8884.jpeg" } },
 ];
 
+memories.forEach((m) => {
+  if (HEROES.has(m.id) && m.role !== "anchor") m.role = "hero";
+});
+
 const edges: [string, string][] = [
-  // NW intra
   ["m1","m2"], ["m1","m3"], ["m2","m5"], ["m3","m4"], ["m4","m5"], ["m1","m4"],
-  // N intra
   ["m6","m7"], ["m7","m8"], ["m6","m9"], ["m8","m10"], ["m9","m10"], ["m7","m9"],
-  // NE intra
   ["m11","m12"], ["m12","m13"], ["m11","m14"], ["m13","m15"], ["m14","m15"], ["m12","m14"],
-  // SW intra
   ["m17","m18"], ["m17","m19"], ["m18","m20"], ["m19","m21"], ["m19","m20"], ["m17","m20"],
-  // S intra
   ["m22","m23"], ["m23","m24"], ["m22","m25"], ["m24","m26"], ["m25","m26"], ["m23","m25"], ["m26","m27"], ["m24","m27"],
-  // SE intra
   ["m28","m29"], ["m29","m30"], ["m28","m31"], ["m30","m32"], ["m31","m32"], ["m29","m31"],
-  // Cross-cluster bridges
   ["m5","m6"], ["m8","m11"], ["m4","m17"], ["m10","m23"], ["m13","m28"], ["m20","m22"], ["m27","m30"],
-  // Anchor (video) hubs out to every cluster
   ["m16","m4"], ["m16","m9"], ["m16","m14"], ["m16","m20"], ["m16","m23"], ["m16","m30"],
 ];
 
 const MemoryUniverse = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
-  const target = useRef({ x: 0, y: 0 });
-  const current = useRef({ x: 0, y: 0 });
+
+  // Transform state — single source of truth, mutated outside React.
+  // current/target separation lets us lerp toward target each frame.
+  const target = useRef({ x: 0, y: 0, scale: 1 });
+  const current = useRef({ x: 0, y: 0, scale: 1 });
+
+  // Velocity for inertia (px/frame in world space).
+  const velocity = useRef({ x: 0, y: 0 });
+
+  // Sampling buffer for release-velocity calculation.
+  const samples = useRef<{ x: number; y: number; t: number }[]>([]);
+
   const didDragRef = useRef(false);
   const recenterRef = useRef<() => void>(() => {});
-  const focusOnRef = useRef<(x: number, y: number) => void>(() => {});
+  const focusOnRef = useRef<(x: number, y: number, scale?: number) => void>(() => {});
   const [selected, setSelected] = useState<string | null>(null);
 
-  // Unified drag-to-pan (mouse + touch via Pointer Events).
-  // Tap vs. drag is decided by movement threshold; drags suppress the click that follows.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -148,28 +162,84 @@ const MemoryUniverse = () => {
     const onResize = () => { rect = el.getBoundingClientRect(); };
     window.addEventListener("resize", onResize);
 
+    // Detect coarse pointer (touch) for tuning.
+    const isTouchPrimary = matchMedia("(pointer: coarse)").matches;
+    const lerpFactor = isTouchPrimary ? LERP_TOUCH : LERP_DESKTOP;
+
     let raf = 0;
     let running = false;
+
+    // Compute the max pan offset in screen-space, given current scale.
+    // World is centered, so when world is bigger than viewport we can pan
+    // up to (worldDim*scale - viewport)/2 in either direction.
+    const maxPan = (scale: number) => ({
+      x: Math.max(0, (WORLD_W * scale - rect.width) / 2),
+      y: Math.max(0, (WORLD_H * scale - rect.height) / 2),
+    });
+
+    // Apply transform to the DOM. Single write per frame.
+    const applyTransform = () => {
+      if (!worldRef.current) return;
+      const c = current.current;
+      worldRef.current.style.transform =
+        `translate3d(${c.x}px, ${c.y}px, 0) scale(${c.scale})`;
+    };
 
     const tick = () => {
       const c = current.current;
       const t = target.current;
+
+      // 1) Inertia phase — when not actively dragging, integrate velocity into target.
+      const v = velocity.current;
+      if (!dragging && (Math.abs(v.x) > MIN_VELOCITY || Math.abs(v.y) > MIN_VELOCITY)) {
+        t.x += v.x;
+        t.y += v.y;
+        v.x *= FRICTION;
+        v.y *= FRICTION;
+      } else if (!dragging) {
+        v.x = 0;
+        v.y = 0;
+      }
+
+      // 2) Rubber-band the target back inside bounds when not dragging.
+      // While dragging we let it overshoot with resistance (handled in pointermove).
+      if (!dragging) {
+        const max = maxPan(t.scale);
+        if (t.x > max.x) t.x = max.x;
+        if (t.x < -max.x) t.x = -max.x;
+        if (t.y > max.y) t.y = max.y;
+        if (t.y < -max.y) t.y = -max.y;
+      }
+
+      // 3) Lerp current toward target.
       const dx = t.x - c.x;
       const dy = t.y - c.y;
-      if (Math.abs(dx) < 0.1 && Math.abs(dy) < 0.1) {
-        c.x = t.x;
-        c.y = t.y;
-        if (worldRef.current) {
-          worldRef.current.style.transform = `translate3d(${c.x}px, ${c.y}px, 0)`;
-        }
+      const ds = t.scale - c.scale;
+
+      const stillX = Math.abs(dx) < 0.1;
+      const stillY = Math.abs(dy) < 0.1;
+      const stillS = Math.abs(ds) < 0.001;
+      const stillV = Math.abs(v.x) < MIN_VELOCITY && Math.abs(v.y) < MIN_VELOCITY;
+
+      if (stillX && stillY && stillS && stillV) {
+        c.x = t.x; c.y = t.y; c.scale = t.scale;
+        applyTransform();
         running = false;
         return;
       }
-      c.x += dx * 0.12;
-      c.y += dy * 0.12;
-      if (worldRef.current) {
-        worldRef.current.style.transform = `translate3d(${c.x}px, ${c.y}px, 0)`;
-      }
+
+      // Use a slightly stiffer lerp for the rubber-band return so it doesn't drift.
+      const isReturning = !dragging && (
+        Math.abs(t.x) < Math.abs(c.x) - 1 ||
+        Math.abs(t.y) < Math.abs(c.y) - 1
+      );
+      const f = isReturning ? RUBBERBAND_RETURN : lerpFactor;
+
+      c.x += dx * f;
+      c.y += dy * f;
+      c.scale += ds * f;
+
+      applyTransform();
       raf = requestAnimationFrame(tick);
     };
 
@@ -179,62 +249,233 @@ const MemoryUniverse = () => {
       raf = requestAnimationFrame(tick);
     };
 
-    const clamp = (v: number, max: number) => Math.max(-max, Math.min(max, v));
+    // ---- Pointer / gesture handling ----
 
-    // Drag state
     let dragging = false;
-    let startX = 0;
-    let startY = 0;
     let startTargetX = 0;
     let startTargetY = 0;
-    let moved = 0;
+
+    // Active pointers tracked for pinch.
+    const pointers = new Map<number, { x: number; y: number }>();
+
+    // For pinch gesture state.
+    let pinchStart: {
+      dist: number;
+      midX: number;
+      midY: number;
+      startScale: number;
+      startTargetX: number;
+      startTargetY: number;
+    } | null = null;
+
+    // For double-tap detection.
+    let lastTap = { t: 0, x: 0, y: 0 };
+
+    const pinchDistAndMid = () => {
+      const pts = Array.from(pointers.values());
+      if (pts.length < 2) return null;
+      const [a, b] = pts;
+      const dx = a.x - b.x;
+      const dy = a.y - b.y;
+      return {
+        dist: Math.hypot(dx, dy),
+        midX: (a.x + b.x) / 2,
+        midY: (a.y + b.y) / 2,
+      };
+    };
+
+    const recordSample = (x: number, y: number) => {
+      const t = performance.now();
+      samples.current.push({ x, y, t });
+      // Drop old samples outside the velocity window.
+      const cutoff = t - VELOCITY_WINDOW_MS;
+      while (samples.current.length && samples.current[0].t < cutoff) {
+        samples.current.shift();
+      }
+    };
 
     const onPointerDown = (e: PointerEvent) => {
-      // Only primary mouse button; touch/pen always pass.
       if (e.pointerType === "mouse" && e.button !== 0) return;
+
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      // Two pointers → start pinch.
+      if (pointers.size === 2) {
+        const m = pinchDistAndMid();
+        if (m) {
+          pinchStart = {
+            dist: m.dist,
+            midX: m.midX,
+            midY: m.midY,
+            startScale: target.current.scale,
+            startTargetX: target.current.x,
+            startTargetY: target.current.y,
+          };
+        }
+        // Cancel any single-finger drag-in-progress data.
+        dragging = false;
+        velocity.current.x = 0;
+        velocity.current.y = 0;
+        return;
+      }
+
+      // Single pointer → start drag.
       dragging = true;
-      moved = 0;
-      startX = e.clientX;
-      startY = e.clientY;
+      velocity.current.x = 0;
+      velocity.current.y = 0;
+      samples.current = [];
+      recordSample(e.clientX, e.clientY);
       startTargetX = target.current.x;
       startTargetY = target.current.y;
-      // NOTE: do NOT setPointerCapture — that redirects the click event to the
-      // container and breaks node onClick handlers. We rely on window-level
-      // move/up listeners below to track drags that leave the container.
     };
 
     const onPointerMove = (e: PointerEvent) => {
-      if (!dragging) return;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      moved = Math.max(moved, Math.hypot(dx, dy));
-      if (moved > DRAG_THRESHOLD) {
-        const maxX = Math.max(0, (WORLD_W - rect.width) / 2);
-        const maxY = Math.max(0, (WORLD_H - rect.height) / 2);
-        target.current.x = clamp(startTargetX + dx, maxX);
-        target.current.y = clamp(startTargetY + dy, maxY);
+      if (!pointers.has(e.pointerId)) return;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      // ---- Pinch update ----
+      if (pinchStart && pointers.size >= 2) {
+        const m = pinchDistAndMid();
+        if (!m) return;
+
+        // New scale clamped.
+        const rawScale = pinchStart.startScale * (m.dist / pinchStart.dist);
+        const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, rawScale));
+
+        // Keep the midpoint fixed in world space:
+        // midpoint in viewport-relative coords:
+        const mvpX = pinchStart.midX - rect.left - rect.width / 2;
+        const mvpY = pinchStart.midY - rect.top - rect.height / 2;
+        // World coord under midpoint at gesture start:
+        // worldPt = (midViewport - startTarget) / startScale
+        const worldPtX = (mvpX - pinchStart.startTargetX) / pinchStart.startScale;
+        const worldPtY = (mvpY - pinchStart.startTargetY) / pinchStart.startScale;
+        // Solve for new target so worldPt stays at the same viewport position:
+        target.current.scale = newScale;
+        target.current.x = mvpX - worldPtX * newScale;
+        target.current.y = mvpY - worldPtY * newScale;
+
         ensureRunning();
+        return;
       }
+
+      // ---- Single-finger drag ----
+      if (!dragging) return;
+      if (samples.current.length === 0) return;
+
+      const first = samples.current[0];
+      const dx = e.clientX - first.x;
+      const dy = e.clientY - first.y;
+
+      // Resolve drag-vs-tap via cumulative distance.
+      const moved = Math.hypot(dx, dy);
+      if (moved <= DRAG_THRESHOLD) {
+        recordSample(e.clientX, e.clientY);
+        return;
+      }
+
+      // Apply rubber-band over-drag: when target leaves bounds, scale
+      // additional movement by OVERDRAG_RESISTANCE.
+      const max = maxPan(target.current.scale);
+      let nextX = startTargetX + dx;
+      let nextY = startTargetY + dy;
+
+      // Compute over-drag amount and damp it.
+      const dampAxis = (next: number, max: number) => {
+        if (next > max) return max + (next - max) * OVERDRAG_RESISTANCE;
+        if (next < -max) return -max + (next + max) * OVERDRAG_RESISTANCE;
+        return next;
+      };
+      target.current.x = dampAxis(nextX, max.x);
+      target.current.y = dampAxis(nextY, max.y);
+
+      recordSample(e.clientX, e.clientY);
+      ensureRunning();
     };
 
-    const onPointerUp = () => {
+    const onPointerUp = (e: PointerEvent) => {
+      pointers.delete(e.pointerId);
+
+      // End pinch when fewer than 2 pointers.
+      if (pinchStart && pointers.size < 2) {
+        pinchStart = null;
+        // No inertia from pinch — feels weird if scale "coasts".
+        velocity.current.x = 0;
+        velocity.current.y = 0;
+        ensureRunning();
+        // If a finger remains, transition to a single-finger drag from here.
+        if (pointers.size === 1) {
+          const remaining = Array.from(pointers.values())[0];
+          dragging = true;
+          samples.current = [];
+          recordSample(remaining.x, remaining.y);
+          startTargetX = target.current.x;
+          startTargetY = target.current.y;
+        }
+        return;
+      }
+
       if (!dragging) return;
       dragging = false;
-      if (moved > DRAG_THRESHOLD) {
-        // Was a real drag — swallow the click that follows pointerup
-        didDragRef.current = true;
-        setTimeout(() => { didDragRef.current = false; }, 60);
+
+      const samps = samples.current;
+      if (samps.length >= 2) {
+        const last = samps[samps.length - 1];
+        const first = samps[0];
+        const dt = last.t - first.t;
+        const totalMoved = Math.hypot(last.x - first.x, last.y - first.y);
+
+        // If we crossed the drag threshold at any point, treat as a drag
+        // (consume the upcoming click) and compute fling velocity.
+        if (totalMoved > DRAG_THRESHOLD) {
+          didDragRef.current = true;
+          setTimeout(() => { didDragRef.current = false; }, 60);
+
+          if (dt > 0) {
+            // px per frame at 60Hz = (px/ms) * (1000/60)
+            const pxPerMs = {
+              x: (last.x - first.x) / dt,
+              y: (last.y - first.y) / dt,
+            };
+            velocity.current.x = pxPerMs.x * (1000 / 60);
+            velocity.current.y = pxPerMs.y * (1000 / 60);
+          }
+        }
       }
+
+      // Double-tap detection — fires when no drag happened.
+      if (!didDragRef.current && samps.length > 0) {
+        const last = samps[samps.length - 1];
+        const now = performance.now();
+        const dt = now - lastTap.t;
+        const dist = Math.hypot(last.x - lastTap.x, last.y - lastTap.y);
+        if (dt < DOUBLE_TAP_MS && dist < DOUBLE_TAP_DIST) {
+          // Double-tap zooms in around the tap point.
+          const tapVpX = last.x - rect.left - rect.width / 2;
+          const tapVpY = last.y - rect.top - rect.height / 2;
+          const startScale = target.current.scale;
+          const newScale = startScale < 1.4 ? 1.6 : 1.0; // toggle zoom in / out
+          // World coord under tap:
+          const worldX = (tapVpX - target.current.x) / startScale;
+          const worldY = (tapVpY - target.current.y) / startScale;
+          target.current.scale = newScale;
+          target.current.x = tapVpX - worldX * newScale;
+          target.current.y = tapVpY - worldY * newScale;
+          lastTap = { t: 0, x: 0, y: 0 };
+        } else {
+          lastTap = { t: now, x: last.x, y: last.y };
+        }
+      }
+
+      samples.current = [];
+      ensureRunning();
     };
 
     el.addEventListener("pointerdown", onPointerDown);
-    // Listen on window so dragging keeps tracking even if the cursor leaves
-    // the container (and so up always fires).
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
     window.addEventListener("pointercancel", onPointerUp);
 
-    // ESC closes expanded card
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setSelected(null);
     };
@@ -250,19 +491,24 @@ const MemoryUniverse = () => {
     };
     document.addEventListener("visibilitychange", onVisibility);
 
-    // Expose recenter for the home button
     recenterRef.current = () => {
       target.current.x = 0;
       target.current.y = 0;
+      target.current.scale = 1;
+      velocity.current.x = 0;
+      velocity.current.y = 0;
       ensureRunning();
     };
 
-    // Smoothly pan so the given world-space point ends up at viewport center.
-    focusOnRef.current = (x: number, y: number) => {
-      const maxX = Math.max(0, (WORLD_W - rect.width) / 2);
-      const maxY = Math.max(0, (WORLD_H - rect.height) / 2);
-      target.current.x = clamp(WORLD_W / 2 - x, maxX);
-      target.current.y = clamp(WORLD_H / 2 - y, maxY);
+    // Pan so a world-space point lands at the viewport center, optionally
+    // zooming in to the given scale.
+    focusOnRef.current = (x: number, y: number, scale?: number) => {
+      const s = scale ?? Math.max(target.current.scale, 1.3);
+      target.current.scale = s;
+      target.current.x = -x * s;
+      target.current.y = -y * s;
+      velocity.current.x = 0;
+      velocity.current.y = 0;
       ensureRunning();
     };
 
@@ -283,16 +529,17 @@ const MemoryUniverse = () => {
   const byId = useMemo(() => Object.fromEntries(memories.map((m) => [m.id, m])), []);
 
   const handleContainerClick = () => {
-    if (didDragRef.current) return; // just released a drag — don't close
+    if (didDragRef.current) return;
     setSelected(null);
   };
 
   const handleNodeToggle = (id: string) => {
     if (didDragRef.current) return;
     setSelected((s) => {
-      if (s === id) return null; // tapping the open node closes it
+      if (s === id) return null;
       const m = byId[id];
-      if (m) focusOnRef.current(m.x, m.y); // pan to center the node
+      // On selection, gently focus & zoom toward it (1.3x).
+      if (m) focusOnRef.current(m.x, m.y, 1.3);
       return id;
     });
   };
@@ -318,7 +565,7 @@ const MemoryUniverse = () => {
         }}
       />
 
-      {/* World — translated by drag */}
+      {/* World — translated + scaled by gesture loop */}
       <div
         ref={worldRef}
         className="absolute left-1/2 top-1/2"
@@ -327,6 +574,7 @@ const MemoryUniverse = () => {
           height: WORLD_H,
           marginLeft: -WORLD_W / 2,
           marginTop: -WORLD_H / 2,
+          transformOrigin: "center center",
           willChange: "transform",
         }}
       >
@@ -350,6 +598,7 @@ const MemoryUniverse = () => {
             const B = byId[b];
             if (!A || !B) return null;
             const isActive = selected === a || selected === b;
+            const isAnyActive = selected !== null;
             return (
               <line
                 key={i}
@@ -357,10 +606,16 @@ const MemoryUniverse = () => {
                 y1={A.y}
                 x2={B.x}
                 y2={B.y}
-                stroke={isActive ? "hsl(195 95% 92% / 0.95)" : "hsl(195 70% 82% / 0.55)"}
-                strokeWidth={isActive ? 2.2 : 1.4}
-                filter="url(#line-glow)"
-                style={{ transition: "stroke 400ms ease, stroke-width 400ms ease" }}
+                stroke={
+                  isActive
+                    ? "hsl(195 95% 92% / 0.95)"
+                    : isAnyActive
+                      ? "hsl(195 50% 75% / 0.18)"
+                      : "hsl(195 50% 75% / 0.30)"
+                }
+                strokeWidth={isActive ? 2.0 : 0.9}
+                filter={isActive ? "url(#line-glow)" : undefined}
+                style={{ transition: "stroke 400ms ease, stroke-width 400ms ease, opacity 400ms ease" }}
               />
             );
           })}
@@ -377,11 +632,10 @@ const MemoryUniverse = () => {
         ))}
       </div>
 
-      {/* Foreground UI */}
       <Link
         to="/"
-        className="pointer-events-auto absolute left-5 top-5 z-40 rounded-full px-4 py-2 text-[0.7rem] tracking-[0.3em] uppercase text-parchment/70 backdrop-blur-sm transition hover:text-parchment"
-        style={{ background: "hsl(0 0% 100% / 0.06)", border: "1px solid hsl(0 0% 100% / 0.1)" }}
+        className="pointer-events-auto absolute left-5 top-5 z-40 rounded-full px-3.5 py-1.5 text-[0.65rem] tracking-[0.3em] uppercase text-parchment/60 backdrop-blur-sm transition hover:text-parchment"
+        style={{ background: "hsl(0 0% 100% / 0.04)", border: "1px solid hsl(0 0% 100% / 0.08)" }}
       >
         ← back
       </Link>
@@ -392,18 +646,18 @@ const MemoryUniverse = () => {
           e.stopPropagation();
           recenterRef.current();
         }}
-        className="pointer-events-auto absolute right-5 top-5 z-40 rounded-full px-4 py-2 text-[0.7rem] tracking-[0.3em] uppercase text-parchment/70 backdrop-blur-sm transition hover:text-parchment"
-        style={{ background: "hsl(0 0% 100% / 0.06)", border: "1px solid hsl(0 0% 100% / 0.1)" }}
+        className="pointer-events-auto absolute right-5 top-5 z-40 rounded-full px-3.5 py-1.5 text-[0.65rem] tracking-[0.3em] uppercase text-parchment/60 backdrop-blur-sm transition hover:text-parchment"
+        style={{ background: "hsl(0 0% 100% / 0.04)", border: "1px solid hsl(0 0% 100% / 0.08)" }}
       >
         ⊕ home
       </button>
 
       <div className="pointer-events-none absolute bottom-6 left-1/2 z-30 -translate-x-1/2 px-4 text-center whitespace-nowrap">
-        <div className="font-display text-xs sm:text-sm text-parchment/60 tracking-tight">
-          drag to wander · tap a memory
+        <div className="font-display text-xs sm:text-sm text-parchment/50 tracking-tight">
+          drag to wander · pinch to zoom · tap a memory
         </div>
-        <div className="hidden sm:block mt-1 text-[0.6rem] tracking-[0.3em] uppercase text-parchment/40">
-          press esc to close
+        <div className="hidden sm:block mt-1 text-[0.55rem] tracking-[0.3em] uppercase text-parchment/30">
+          press esc to close · double-tap to zoom
         </div>
       </div>
     </div>
@@ -421,48 +675,55 @@ const MemoryNode = ({
   isAnyExpanded: boolean;
   onToggle: () => void;
 }) => {
-  // Tone is no longer used for shadows — every node glows soft yellow like a star.
-  // Kept on the type for future per-memory accents.
   const dim = isAnyExpanded && !isExpanded;
+  const halo = TONE_HALO[m.tone];
+  const scale = ROLE_HALO_SCALE[m.role];
+
+  const baseSize = m.media ? 88 : 36;
+  const collapsedSize = baseSize * scale.size;
+
   return (
     <div
       className="absolute -translate-x-1/2 -translate-y-1/2"
       style={{
         left: m.x,
         top: m.y,
-        zIndex: isExpanded ? 40 : 10,
+        zIndex: isExpanded ? 40 : m.role === "anchor" ? 20 : m.role === "hero" ? 15 : 10,
       }}
       onClick={(e) => {
         e.stopPropagation();
         if (!isExpanded) onToggle();
       }}
     >
-      {/* Touch-target wrapper. Non-flex, so the inner card can size freely
-          (a flex parent would squish the inner card on its main axis). */}
+      {/* Touch-target wrapper — generous so thumbs hit reliably even when the
+          visible halo is small (hero/regular). 96×96 is well above Apple's 44pt min. */}
       <div className="relative" style={{ width: 96, height: 96 }}>
         <div
           className="absolute left-1/2 top-1/2 overflow-hidden"
           style={{
-            // Collapsed: 88px circular thumbnail. Expanded: rounded square card.
-            width: isExpanded ? "clamp(240px, 72vw, 320px)" : m.media ? 88 : 36,
-            height: isExpanded ? "clamp(240px, 72vw, 320px)" : m.media ? 88 : 36,
+            width: isExpanded ? "clamp(240px, 72vw, 320px)" : collapsedSize,
+            height: isExpanded ? "clamp(240px, 72vw, 320px)" : collapsedSize,
             transform: "translate(-50%, -50%)",
             borderRadius: isExpanded ? 22 : 9999,
-            background: m.media ? "transparent" : "hsl(48 60% 70% / 0.4)",
+            background: m.media ? "transparent" : `${halo.glow}`,
             boxShadow: isExpanded
-              ? `0 0 80px 10px ${STAR_RING_GLOW}, 0 0 180px 40px ${STAR_RING_FAR}, 0 25px 50px -12px hsl(0 0% 0% / 0.7)`
-              : `0 0 0 2px ${STAR_RING_INNER}, 0 0 22px 5px ${STAR_RING_GLOW}, 0 0 50px 18px ${STAR_RING_FAR}`,
+              ? `0 0 80px 10px ${halo.glow}, 0 0 180px 40px ${halo.far}, 0 25px 50px -12px hsl(0 0% 0% / 0.7)`
+              : [
+                  `0 0 0 ${1.5 * scale.ring}px ${halo.inner}`,
+                  `0 0 ${20 * scale.glow}px ${5 * scale.glow}px ${halo.glow}`,
+                  `0 0 ${50 * scale.far}px ${18 * scale.far}px ${halo.far}`,
+                ].join(", "),
             transition:
               "width 600ms cubic-bezier(0.6,0,0.2,1), height 600ms cubic-bezier(0.6,0,0.2,1), border-radius 600ms cubic-bezier(0.6,0,0.2,1), box-shadow 600ms ease, opacity 400ms ease",
             cursor: isExpanded ? "default" : "pointer",
-            opacity: dim ? 0.35 : 1,
+            opacity: dim ? 0.30 : scale.opacity,
           }}
         >
           {!isExpanded && !m.media && (
             <span
               className="absolute inset-0 rounded-full pointer-events-none"
               style={{
-                background: `radial-gradient(circle, ${STAR_RING_GLOW} 0%, transparent 70%)`,
+                background: `radial-gradient(circle, ${halo.glow} 0%, transparent 70%)`,
                 animation: "memory-pulse 3.4s ease-in-out infinite",
               }}
             />
