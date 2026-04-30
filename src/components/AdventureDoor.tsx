@@ -1,247 +1,303 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-type Puff = {
-  w: number; // px container width
-  h: number;
-  top: string;
-  left?: string;
-  right?: string;
-  bottom?: string;
-  tone: "sky" | "moss" | "peach";
-  delay?: number;
+/**
+ * AdventureDoor — landing scene.
+ *
+ * One click triggers the full cinematic sequence:
+ *   1. Brutalist hint fades + scales up
+ *   2. Mist parts (drops + fades, ~2.6s)
+ *   3. Door zooms toward camera (~3.2s, overlapping with mist)
+ *   4. Door glow swells, then route transitions to /universe
+ *
+ * Total wall-clock: ~3.6s before navigate fires.
+ */
+
+type MistLayer = {
+  width: number;
+  height: number;
+  leftPct: number;
+  topPct: number;
+  alphaMul: number;
+  blurPx: number;
+  driftX: number;
+  driftY: number;
+  delay: number;
+  z: number;
 };
 
-// Tones inspired by the reference: chunky cumulus puffs, sunlit warm-cream tops
-// fading down through pastel cyan/mint into deeper moss at the base.
-const toneStyles: Record<Puff["tone"], { base: string; highlight: string }> = {
-  sky: {
-    base: "linear-gradient(180deg, hsl(50 100% 96%) 0%, hsl(180 75% 86%) 35%, hsl(180 60% 70%) 70%, hsl(160 50% 50%) 100%)",
-    highlight: "hsl(50 100% 95%)",
-  },
-  moss: {
-    base: "linear-gradient(180deg, hsl(60 90% 94%) 0%, hsl(150 60% 80%) 35%, hsl(150 50% 60%) 70%, hsl(150 55% 38%) 100%)",
-    highlight: "hsl(55 95% 94%)",
-  },
-  peach: {
-    base: "linear-gradient(180deg, hsl(45 100% 95%) 0%, hsl(170 70% 85%) 40%, hsl(160 55% 65%) 75%, hsl(150 45% 42%) 100%)",
-    highlight: "hsl(48 100% 96%)",
-  },
-};
+// Palette: cool & dreamy
+const PALETTE = {
+  bgTop: "hsl(205 60% 84%)",
+  bgBot: "hsl(210 35% 60%)",
+  cloudA: "245, 248, 252",
+  cloudB: "219, 230, 241",
+  cloudC: "194, 211, 227",
+  shadow: "60, 80, 110",
+  doorTop: "hsl(215 40% 18%)",
+  doorBot: "hsl(215 45% 11%)",
+  doorBorder: "hsl(215 35% 45%)",
+  glow: "232, 214, 168",
+  textColor: "hsl(215 50% 14%)",
+  textShadow: "255, 255, 255",
+} as const;
 
-const PuffCloud = ({ p }: { p: Puff }) => {
-  const t = toneStyles[p.tone];
-  // Fewer, fatter lobes — chunky cumulus stacks like the reference video.
-  const circles = [
-    { l: 0.0, t: 0.32, s: 0.65 },   // bottom-left lobe
-    { l: 0.22, t: 0.04, s: 0.7 },   // tall top-left lobe
-    { l: 0.5, t: 0.12, s: 0.66 },   // top-right lobe
-    { l: 0.65, t: 0.38, s: 0.55 },  // bottom-right lobe
-    { l: 0.32, t: 0.42, s: 0.5 },   // bottom-center filler
-  ];
-  return (
-    <div
-      className="puff cloud-float"
-      style={{
-        width: `calc(${p.w}px * var(--cloud-scale))`,
-        height: `calc(${p.h}px * var(--cloud-scale))`,
-        top: p.top,
-        left: p.left,
-        right: p.right,
-        bottom: p.bottom,
-        animationDelay: `${p.delay ?? 0}s`,
-      }}
-    >
-      {circles.map((c, i) => (
-        <span
-          key={i}
-          style={{
-            left: `${c.l * 100}%`,
-            top: `${c.t * 100}%`,
-            width: `${c.s * 100}%`,
-            height: `${c.s * 100}%`,
-            background: t.base,
-          }}
-        />
-      ))}
-      {/* highlight dot */}
-      <span
-        style={{
-          left: "30%",
-          top: "18%",
-          width: "18%",
-          height: "18%",
-          background: `radial-gradient(circle at 35% 30%, ${t.highlight} 0%, transparent 65%)`,
-          filter: "blur(2px)",
-          boxShadow: "none",
-        }}
-      />
-    </div>
-  );
-};
+const DENSITY = 8;
+const MIST_HEIGHT_PCT = 85;
 
-// Cloud bank — densely cover the door. Inner clouds sit OVER the centered door
-// and split off to the left when opened.
-const leftPuffs: Puff[] = [
-  // outer-left blanket
-  { w: 420, h: 260, top: "4%", left: "2%", tone: "sky", delay: 0 },
-  { w: 360, h: 220, top: "22%", left: "-6%", tone: "moss", delay: 1.5 },
-  { w: 380, h: 230, top: "44%", left: "8%", tone: "peach", delay: 3 },
-  { w: 320, h: 200, top: "62%", left: "-4%", tone: "sky", delay: 2 },
-  { w: 380, h: 230, top: "78%", left: "6%", tone: "moss", delay: 3.8 },
-  // inner — covering the door's left half (centered around 35-50%)
-  { w: 380, h: 240, top: "12%", left: "32%", tone: "moss", delay: 4 },
-  { w: 340, h: 210, top: "34%", left: "36%", tone: "peach", delay: 1 },
-  { w: 360, h: 220, top: "56%", left: "30%", tone: "sky", delay: 2.6 },
-  { w: 320, h: 200, top: "74%", left: "34%", tone: "peach", delay: 0.7 },
-];
+function buildMistLayers(): MistLayer[] {
+  const layers: MistLayer[] = [];
+  const layerCount = Math.min(8, 2 + Math.ceil(DENSITY * 0.7));
 
-const rightPuffs: Puff[] = [
-  // outer-right blanket
-  { w: 420, h: 260, top: "2%", right: "2%", tone: "moss", delay: 0.5 },
-  { w: 360, h: 220, top: "22%", right: "-6%", tone: "sky", delay: 2.5 },
-  { w: 380, h: 230, top: "46%", right: "6%", tone: "peach", delay: 3.5 },
-  { w: 320, h: 200, top: "64%", right: "-4%", tone: "moss", delay: 1.2 },
-  { w: 380, h: 230, top: "80%", right: "4%", tone: "sky", delay: 4.2 },
-  // inner — covering the door's right half (centered around 50-65%)
-  { w: 380, h: 240, top: "14%", right: "30%", tone: "sky", delay: 4.5 },
-  { w: 340, h: 210, top: "36%", right: "34%", tone: "moss", delay: 0.8 },
-  { w: 360, h: 220, top: "58%", right: "28%", tone: "peach", delay: 2.2 },
-  { w: 320, h: 200, top: "76%", right: "32%", tone: "moss", delay: 1.4 },
-];
+  for (let i = 0; i < layerCount; i++) {
+    const w = 220 + ((i * 47) % 180);
+    const h = 110 + ((i * 31) % 90);
+    const yPct = (100 - MIST_HEIGHT_PCT) + (i / layerCount) * MIST_HEIGHT_PCT * 0.85;
+    const xOff = ((i * 23) % 80) + 10 - 50;
+    const leftPct = 50 + xOff - (w / 6.8) / 2;
+    const driftDir = i % 2 === 0 ? 1 : -1;
+    const driftAmt = 60 + ((i * 13) % 60);
 
-// Per-cloud vertical drift (px) when parting — some rise, some sink, varied magnitudes
-const leftDriftY = [-80, 60, -110, 90, -50, 70, -40, 100, -90];
-const rightDriftY = [70, -90, 50, -100, 80, -60, 95, -75, 55];
-// Slight rotation for organic motion
-const leftRot = [-8, 6, -10, 4, -5, 7, -9, 5, -6];
-const rightRot = [9, -6, 8, -7, 5, -9, 7, -8, 4];
+    layers.push({
+      width: w,
+      height: h,
+      leftPct,
+      topPct: yPct,
+      alphaMul: Math.min(0.95, 0.4 + DENSITY * 0.07),
+      blurPx: 10 + (i % 3) * 4,
+      driftX: driftDir * driftAmt,
+      driftY: 50,
+      delay: i * 0.06,
+      z: 10 + i,
+    });
+  }
+
+  if (DENSITY >= 6) {
+    const wispCount = Math.floor((DENSITY - 5) * 1.5) + 1;
+    for (let i = 0; i < wispCount; i++) {
+      const w = 180 + ((i * 41) % 120);
+      const h = 60 + ((i * 17) % 40);
+      const yPct = 5 + ((i * 11) % 25);
+      const leftPct = 5 + ((i * 29) % 80);
+      const driftDir = i % 2 === 0 ? 1 : -1;
+
+      layers.push({
+        width: w,
+        height: h,
+        leftPct,
+        topPct: yPct,
+        alphaMul: 0.5 + (DENSITY - 5) * 0.05,
+        blurPx: 14,
+        driftX: driftDir * 80,
+        driftY: -40,
+        delay: 0.08 * i + 0.2,
+        z: 20 + i,
+      });
+    }
+  }
+  return layers;
+}
+
+const MIST_LAYERS = buildMistLayers();
+
+const rgba = (rgb: string, a: number) => `rgba(${rgb}, ${a})`;
 
 const AdventureDoor = () => {
-  const [opened, setOpened] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "playing">("idle");
   const navigate = useNavigate();
+  const playedRef = useRef(false);
 
-  // After the clouds part and the door zooms in, transport into the universe
+  const play = () => {
+    if (playedRef.current) return;
+    playedRef.current = true;
+    setPhase("playing");
+  };
+
   useEffect(() => {
-    if (!opened) return;
-    const t = setTimeout(() => navigate("/universe"), 4000);
+    if (phase !== "playing") return;
+    const t = setTimeout(() => navigate("/universe"), 3600);
     return () => clearTimeout(t);
-  }, [opened, navigate]);
+  }, [phase, navigate]);
+
+  const opened = phase === "playing";
+
+  const baseAlpha = Math.min(1, 0.35 + DENSITY * 0.075);
+  const baseStop = Math.max(15, 50 - DENSITY * 4);
+  const baseMistGradient = `linear-gradient(180deg,
+    transparent 0%,
+    ${rgba(PALETTE.cloudA, baseAlpha * 0.3)} ${baseStop}%,
+    ${rgba(PALETTE.cloudB, baseAlpha * 0.7)} ${Math.min(95, baseStop + 25)}%,
+    ${rgba(PALETTE.cloudC, baseAlpha)} 100%)`;
 
   return (
     <section
       className="relative min-h-screen w-full overflow-hidden cursor-pointer select-none"
-      style={{ background: "var(--gradient-sky)" }}
-      onClick={() => setOpened(true)}
+      style={{
+        background: `linear-gradient(180deg, ${PALETTE.bgTop} 0%, ${PALETTE.bgBot} 100%)`,
+      }}
+      onClick={play}
       role="button"
       aria-label="Click to go on an adventure"
     >
-      {/* Distant atmospheric haze (subtle) */}
       <div
-        className="absolute inset-0 opacity-50 pointer-events-none"
+        className="absolute inset-0 pointer-events-none"
         style={{
-          background:
-            "radial-gradient(ellipse at 20% 20%, hsl(195 70% 85% / 0.6), transparent 50%), radial-gradient(ellipse at 80% 80%, hsl(150 40% 70% / 0.5), transparent 55%)",
+          opacity: 0.4,
+          background: `
+            radial-gradient(ellipse at 25% 30%, ${rgba(PALETTE.cloudA, 0.8)}, transparent 55%),
+            radial-gradient(ellipse at 75% 65%, ${rgba(PALETTE.cloudB, 0.67)}, transparent 60%)`,
         }}
       />
 
-      {/* Stage */}
-      <div className="relative flex items-center justify-center" style={{ height: "100vh" }}>
-        {/* Door — scales up like walking toward it */}
+      {/* Door — beneath mist when at rest, scales up dramatically on play */}
+      <div
+        className="absolute left-1/2 top-1/2 z-[5]"
+        style={{
+          transform: opened
+            ? "translate(-50%, -50%) scale(7)"
+            : "translate(-50%, -50%) scale(var(--door-closed-scale))",
+          opacity: opened ? 0.85 : 0.95,
+          transition:
+            "transform 3.2s cubic-bezier(0.55, 0, 0.2, 1), opacity 1s ease",
+        }}
+      >
         <div
-          className="relative z-10"
+          className="relative w-[18rem] md:w-[22rem] h-[28rem] md:h-[34rem] rounded-t-full"
           style={{
-            transform: opened
-              ? "scale(var(--door-open-scale)) translateY(-10px)"
-              : "scale(var(--door-closed-scale))",
-            opacity: opened ? 1 : 0.95,
-            transition: "transform 3.6s var(--ease-cloud), opacity 1.8s var(--ease-cloud)",
+            background: `linear-gradient(180deg, ${PALETTE.doorTop} 0%, ${PALETTE.doorBot} 100%)`,
+            border: `2px solid ${PALETTE.doorBorder}66`,
+            boxShadow:
+              `0 30px 60px -20px ${rgba(PALETTE.shadow, 0.55)},
+               0 10px 25px -10px ${rgba(PALETTE.shadow, 0.45)},
+               inset 0 1px 0 ${PALETTE.doorBorder}44`,
           }}
         >
           <div
-            className={`relative w-[18rem] md:w-[22rem] h-[28rem] md:h-[34rem] rounded-t-full ${opened ? "door-glow" : ""}`}
+            className="absolute inset-4 rounded-t-full border"
+            style={{ borderColor: `${PALETTE.doorBorder}55` }}
+          />
+          <div
+            className="absolute right-6 top-1/2 w-4 h-4 rounded-full"
             style={{
-              background: "linear-gradient(180deg, hsl(var(--door-wood)) 0%, hsl(150 35% 14%) 100%)",
-              boxShadow: "var(--shadow-door)",
-              border: "2px solid hsl(165 40% 45% / 0.4)",
+              background: `rgb(${PALETTE.glow})`,
+              boxShadow: `0 0 20px ${rgba(PALETTE.glow, 0.8)}`,
             }}
-          >
-            <div className="absolute inset-4 rounded-t-full border" style={{ borderColor: "hsl(165 40% 45% / 0.3)" }} />
-            <div
-              className="absolute right-6 top-1/2 w-4 h-4 rounded-full"
-              style={{ background: "hsl(var(--door-glow))", boxShadow: "0 0 20px hsl(var(--door-glow) / 0.8)" }}
-            />
-            {opened && (
-              <div
-                className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-[90%] h-3 rounded-full blur-md"
-                style={{ background: "hsl(var(--door-glow) / 0.9)" }}
-              />
-            )}
-            <div className="absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
-              <h2
-                className={`font-display text-2xl md:text-3xl leading-tight tracking-tight ${opened ? "text-reveal" : "opacity-0"}`}
-                style={{ color: "hsl(var(--sky-pale))", fontWeight: 600 }}
-              >
-                Going on an<br />adventure
-              </h2>
-            </div>
-          </div>
+          />
+          <div
+            className="absolute -inset-1 rounded-t-full pointer-events-none"
+            style={{
+              opacity: opened ? 1 : 0,
+              boxShadow: `0 0 80px 12px ${rgba(PALETTE.glow, 0.7)},
+                          inset 0 0 60px ${rgba(PALETTE.glow, 0.4)}`,
+              transition: "opacity 1s ease",
+            }}
+          />
         </div>
-
-        {/* LEFT clouds — each drifts independently with vertical motion + fade */}
-        <div className="absolute inset-0 z-20 pointer-events-none">
-          {leftPuffs.map((p, i) => (
-            <div
-              key={i}
-              style={{
-                position: "absolute",
-                inset: 0,
-                transform: opened
-                  ? `translate(-140%, ${leftDriftY[i]}px) rotate(${leftRot[i]}deg) scale(0.7)`
-                  : "translate(0, 0) rotate(0) scale(1)",
-                opacity: opened ? 0 : 1,
-                transition: `transform 3.4s var(--ease-cloud) ${i * 0.08}s, opacity 1.8s ease-out ${0.6 + i * 0.08}s`,
-              }}
-            >
-              <PuffCloud p={p} />
-            </div>
-          ))}
-        </div>
-
-        {/* RIGHT clouds */}
-        <div className="absolute inset-0 z-20 pointer-events-none">
-          {rightPuffs.map((p, i) => (
-            <div
-              key={i}
-              style={{
-                position: "absolute",
-                inset: 0,
-                transform: opened
-                  ? `translate(140%, ${rightDriftY[i]}px) rotate(${rightRot[i]}deg) scale(0.7)`
-                  : "translate(0, 0) rotate(0) scale(1)",
-                opacity: opened ? 0 : 1,
-                transition: `transform 3.4s var(--ease-cloud) ${i * 0.08}s, opacity 1.8s ease-out ${0.6 + i * 0.08}s`,
-              }}
-            >
-              <PuffCloud p={p} />
-            </div>
-          ))}
-        </div>
-
-        {/* Hint */}
-        {!opened && (
-          <div className="absolute bottom-14 left-1/2 -translate-x-1/2 z-30 text-center hint-pulse px-6">
-            <div className="font-display text-base md:text-xl text-primary/80 tracking-tight">
-              click to go on an adventure
-            </div>
-          </div>
-        )}
       </div>
 
-      <div className="absolute bottom-6 left-8 z-30 text-[0.65rem] tracking-[0.4em] uppercase text-primary/50">
+      {/* Base mist — wall of fog rising from bottom */}
+      <div
+        className="absolute left-0 right-0 bottom-0 pointer-events-none"
+        style={{
+          height: `${MIST_HEIGHT_PCT}%`,
+          background: baseMistGradient,
+          filter: `blur(${6 + DENSITY * 0.6}px)`,
+          opacity: opened ? 0 : 1,
+          transform: opened ? "translateY(80%)" : "translateY(0)",
+          transition:
+            "transform 2.6s cubic-bezier(0.65,0,0.35,1), opacity 1.8s ease 0.3s",
+          zIndex: 8,
+        }}
+      />
+
+      {/* Layered mist puffs */}
+      {MIST_LAYERS.map((m, i) => {
+        const layerAlpha = m.alphaMul;
+        const isWisp = m.z >= 20;
+        return (
+          <div
+            key={i}
+            className="absolute pointer-events-none"
+            style={{
+              left: `${m.leftPct}%`,
+              top: `${m.topPct}%`,
+              width: m.width,
+              height: m.height,
+              background: isWisp
+                ? `radial-gradient(ellipse at 50% 50%,
+                    ${rgba(PALETTE.cloudA, layerAlpha)} 0%,
+                    ${rgba(PALETTE.cloudB, 0.25)} 50%,
+                    transparent 80%)`
+                : `radial-gradient(ellipse at 50% 50%,
+                    ${rgba(PALETTE.cloudA, layerAlpha)} 0%,
+                    ${rgba(PALETTE.cloudB, layerAlpha * 0.7)} 45%,
+                    ${rgba(PALETTE.cloudC, layerAlpha * 0.3)} 75%,
+                    transparent 100%)`,
+              filter: `blur(${m.blurPx}px)`,
+              opacity: opened
+                ? 0
+                : isWisp
+                  ? 0.8
+                  : Math.min(1, 0.55 + DENSITY * 0.05),
+              transform: opened
+                ? `translate(${m.driftX}px, ${m.driftY}px) scale(0.9)`
+                : "translate(0, 0) scale(1)",
+              transition: `transform 2.6s cubic-bezier(0.65,0,0.35,1) ${m.delay}s,
+                           opacity 1.6s ease ${m.delay + 0.3}s`,
+              zIndex: m.z,
+            }}
+          />
+        );
+      })}
+
+      {/* Brutalist headline */}
+      <div
+        className="absolute left-0 right-0 top-1/2 z-[35] text-center pointer-events-none px-4"
+        style={{
+          transform: opened
+            ? "translateY(-50%) scale(1.18)"
+            : "translateY(-50%) scale(1)",
+          opacity: opened ? 0 : 1,
+          transition: "opacity 0.7s ease, transform 0.9s cubic-bezier(0.7,0,0.3,1)",
+        }}
+      >
+        <div
+          className="font-brutalist uppercase"
+          style={{
+            color: PALETTE.textColor,
+            fontSize: "clamp(42px, 9vw, 130px)",
+            fontWeight: 900,
+            lineHeight: 0.92,
+            letterSpacing: "0.01em",
+            textShadow: `0 2px 0 ${rgba(PALETTE.textShadow, 0.45)},
+                         0 0 40px ${rgba(PALETTE.textShadow, 0.5)}`,
+          }}
+        >
+          click to go on
+          <br />
+          an adventure
+        </div>
+      </div>
+
+      {/* Corner labels */}
+      <div
+        className="absolute bottom-6 left-8 z-30 text-[0.65rem] tracking-[0.4em] uppercase"
+        style={{
+          color: PALETTE.textColor,
+          opacity: opened ? 0 : 0.5,
+          transition: "opacity 0.6s ease",
+        }}
+      >
         N° 001 — Mossgate
       </div>
-      <div className="absolute bottom-6 right-8 z-30 text-[0.65rem] tracking-[0.4em] uppercase text-primary/50">
+      <div
+        className="absolute bottom-6 right-8 z-30 text-[0.65rem] tracking-[0.4em] uppercase"
+        style={{
+          color: PALETTE.textColor,
+          opacity: opened ? 0 : 0.5,
+          transition: "opacity 0.6s ease",
+        }}
+      >
         Est. ✦ Wander
       </div>
     </section>
