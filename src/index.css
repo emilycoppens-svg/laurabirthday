@@ -1,0 +1,192 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700&family=Unbounded:wght@300;400;500;600;700;800&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Palette */
+  --sky-pale: 195 75% 92%;
+  --moss-soft: 150 35% 70%;
+  --door-wood: 150 40% 22%;
+  --door-glow: 38 90% 72%;
+
+  /* Responsive scaling — overridden in mobile media query below */
+  --cloud-scale: 1;
+  --door-open-scale: 1.7;
+  --door-closed-scale: 0.55;
+
+  /* Sky → moss gradient backdrop */
+  --gradient-sky: linear-gradient(
+    180deg,
+    hsl(195 80% 88%) 0%,
+    hsl(180 55% 80%) 35%,
+    hsl(165 45% 68%) 65%,
+    hsl(150 38% 52%) 100%
+  );
+
+  /* Easing curves */
+  --ease-cloud: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* Soft elevated door shadow */
+  --shadow-door:
+    0 30px 60px -20px hsl(150 50% 10% / 0.55),
+    0 10px 25px -10px hsl(150 50% 10% / 0.45),
+    inset 0 1px 0 hsl(165 45% 55% / 0.25);
+
+  /* shadcn-style primary used by text-primary */
+  --primary: 150 35% 22%;
+}
+
+/* Mobile: smaller clouds, gentler door zoom so it doesn't overflow */
+@media (max-width: 768px) {
+  :root {
+    --cloud-scale: 0.5;
+    --door-open-scale: 1.25;
+    --door-closed-scale: 0.6;
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "Manrope", system-ui, -apple-system, sans-serif;
+  font-weight: 400;
+  color: hsl(var(--primary));
+  background: hsl(195 80% 88%);
+}
+
+.font-display {
+  font-family: "Unbounded", "Manrope", system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Tailwind utility shim: text-primary / hover:text-primary */
+.text-primary {
+  color: hsl(var(--primary));
+}
+.hover\:text-primary:hover {
+  color: hsl(var(--primary));
+}
+
+/* sr-only */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- Cloud puff ---------- */
+.puff {
+  position: absolute;
+  pointer-events: none;
+  filter: drop-shadow(0 22px 28px hsl(150 35% 22% / 0.28));
+}
+.puff > span {
+  position: absolute;
+  border-radius: 9999px;
+  /* Stronger 3D — bright sunlit top, dark rim shadow on bottom */
+  box-shadow:
+    inset 0 -14px 22px hsl(150 40% 22% / 0.4),
+    inset 0 10px 16px hsl(50 80% 96% / 0.65);
+}
+
+@keyframes cloud-float {
+  0%, 100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(6px, -10px, 0);
+  }
+}
+.cloud-float {
+  animation: cloud-float 9s ease-in-out infinite;
+}
+
+/* ---------- Door glow ---------- */
+@keyframes door-glow-pulse {
+  0%, 100% {
+    box-shadow:
+      var(--shadow-door),
+      0 0 60px 10px hsl(var(--door-glow) / 0.35),
+      inset 0 0 60px hsl(var(--door-glow) / 0.18);
+  }
+  50% {
+    box-shadow:
+      var(--shadow-door),
+      0 0 90px 18px hsl(var(--door-glow) / 0.55),
+      inset 0 0 80px hsl(var(--door-glow) / 0.28);
+  }
+}
+.door-glow {
+  animation: door-glow-pulse 3.6s var(--ease-cloud) infinite;
+}
+
+/* ---------- Text reveal ---------- */
+@keyframes text-reveal {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+    filter: blur(6px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+.text-reveal {
+  animation: text-reveal 1.4s var(--ease-cloud) 0.4s both;
+}
+
+/* ---------- Memory pulse (universe nodes) ---------- */
+@keyframes memory-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+/* ---------- Star flicker (universe background) ---------- */
+@keyframes star-flicker {
+  0%, 100% { opacity: 0.65; }
+  45% { opacity: 0.3; }
+  70% { opacity: 0.85; }
+}
+
+/* Parchment text colour for universe UI */
+.text-parchment\/40 { color: hsl(40 35% 90% / 0.4); }
+.text-parchment\/50 { color: hsl(40 35% 90% / 0.5); }
+.text-parchment\/60 { color: hsl(40 35% 90% / 0.6); }
+.text-parchment\/70 { color: hsl(40 35% 90% / 0.7); }
+
+/* ---------- Hint pulse ---------- */
+@keyframes hint-pulse {
+  0%, 100% {
+    opacity: 0.7;
+    transform: translate(-50%, 0);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(-50%, -4px);
+  }
+}
+.hint-pulse {
+  animation: hint-pulse 2.6s var(--ease-cloud) infinite;
+}
