@@ -38,26 +38,33 @@ const LERP_TOUCH = 0.20;
 const OVERDRAG_RESISTANCE = 0.55;
 const RUBBERBAND_RETURN = 0.18;
 
-// Tone-tinted halo colors. Three alpha-graded stops feed a multi-stop radial
-// gradient so the falloff reads as a soft glow rather than a hard disc → fade.
-const TONE_HALO: Record<Tone, { glow: string; glowSoft: string; glowFaint: string; ring: string }> = {
+// Tone-tinted halo colors. Five alpha-graded stops feed a radial gradient that
+// fades exponentially from the photo edge — never solid, never with a visible
+// outer ring. Inner stops keep low alpha so the glow blurs off the photo
+// instead of sitting around it as a bright disc.
+const TONE_HALO: Record<Tone, {
+  s1: string; s2: string; s3: string; s4: string; s5: string;
+}> = {
   sky: {
-    glow:      "hsl(50 95% 78% / 0.45)",
-    glowSoft:  "hsl(50 95% 78% / 0.22)",
-    glowFaint: "hsl(195 80% 75% / 0.08)",
-    ring:      "hsl(48 100% 92% / 0.55)",
+    s1: "hsl(50 95% 80% / 0.28)",
+    s2: "hsl(50 95% 80% / 0.18)",
+    s3: "hsl(50 90% 78% / 0.10)",
+    s4: "hsl(195 75% 75% / 0.04)",
+    s5: "hsl(195 75% 75% / 0)",
   },
   moss: {
-    glow:      "hsl(50 90% 75% / 0.42)",
-    glowSoft:  "hsl(60 80% 75% / 0.20)",
-    glowFaint: "hsl(150 60% 65% / 0.08)",
-    ring:      "hsl(50 100% 92% / 0.50)",
+    s1: "hsl(55 90% 78% / 0.26)",
+    s2: "hsl(55 85% 78% / 0.16)",
+    s3: "hsl(80 60% 70% / 0.09)",
+    s4: "hsl(150 55% 60% / 0.04)",
+    s5: "hsl(150 55% 60% / 0)",
   },
   peach: {
-    glow:      "hsl(38 95% 75% / 0.45)",
-    glowSoft:  "hsl(38 95% 75% / 0.22)",
-    glowFaint: "hsl(28 85% 70% / 0.08)",
-    ring:      "hsl(48 100% 92% / 0.55)",
+    s1: "hsl(38 95% 78% / 0.28)",
+    s2: "hsl(38 95% 78% / 0.18)",
+    s3: "hsl(34 90% 75% / 0.10)",
+    s4: "hsl(28 80% 70% / 0.04)",
+    s5: "hsl(28 80% 70% / 0)",
   },
 };
 
@@ -588,7 +595,7 @@ const MemoryUniverse = () => {
         cursor: "grab",
       }}
     >
-      <Stars count={60} />
+      <Stars count={120} />
 
       <div
         className="pointer-events-none absolute inset-0 opacity-60"
@@ -733,12 +740,19 @@ const MemoryNode = memo(
 
     const baseSize = m.media ? 88 : 36;
     const collapsedSize = baseSize * scale.size;
-    // Halo wrapper extends well past the photo — controls the visual "glow size".
-    // Wider envelope + multi-stop alpha gradient = softer, more atmospheric glow.
-    const haloSize = collapsedSize + 130 * scale.haloRadius;
-    // R = the photo's edge as a fraction of the halo's radius. Stops outside
-    // R% are visible glow; stops inside R% are hidden behind the photo.
+    // Halo wrapper extends moderately past the photo — narrower than before so
+    // the falloff feels close to the photo, not like a bright surrounding ring.
+    const haloSize = collapsedSize + 70 * scale.haloRadius;
+    // R = the photo's edge as a fraction of the halo's radius. Stops inside
+    // R% are hidden behind the photo; the visible glow lives between R and 100.
     const R = (collapsedSize / 2 / haloSize) * 100;
+    // Pre-compute the five stop positions so the falloff curve is smooth.
+    const reach = 100 - R;
+    const p1 = R;
+    const p2 = R + reach * 0.18;
+    const p3 = R + reach * 0.40;
+    const p4 = R + reach * 0.68;
+    const p5 = 100;
 
     const expanded = isExpanded;
 
@@ -756,9 +770,9 @@ const MemoryNode = memo(
         }}
       >
         <div className="relative" style={{ width: 96, height: 96 }}>
-          {/* Halo wrapper — single GPU-friendly radial gradient with a multi-
-              stop alpha falloff. Brightest right at the photo edge, then easing
-              through soft + faint stops out to fully transparent. */}
+          {/* Halo wrapper — single GPU-friendly radial gradient with five
+              alpha stops, easing from a low-alpha edge to fully transparent.
+              No solid plateau, no visible outer cut-off. */}
           {!expanded && (
             <div
               className="absolute left-1/2 top-1/2 pointer-events-none rounded-full"
@@ -767,12 +781,12 @@ const MemoryNode = memo(
                 height: haloSize,
                 transform: "translate(-50%, -50%)",
                 background: `radial-gradient(circle,
-                  ${halo.glow} 0%,
-                  ${halo.glow} ${R}%,
-                  ${halo.glowSoft} ${R + (100 - R) * 0.35}%,
-                  ${halo.glowFaint} ${R + (100 - R) * 0.65}%,
-                  transparent 100%)`,
-                opacity: dim ? 0.25 : scale.opacity * 0.95,
+                  ${halo.s1} ${p1}%,
+                  ${halo.s2} ${p2}%,
+                  ${halo.s3} ${p3}%,
+                  ${halo.s4} ${p4}%,
+                  ${halo.s5} ${p5}%)`,
+                opacity: dim ? 0.25 : scale.opacity,
                 transition: "opacity 400ms ease",
               }}
             />
@@ -786,12 +800,12 @@ const MemoryNode = memo(
               height: expanded ? "clamp(240px, 72vw, 320px)" : collapsedSize,
               transform: "translate(-50%, -50%)",
               borderRadius: expanded ? 22 : 9999,
-              background: m.media ? "transparent" : halo.glow,
-              // Soft 1px ring — bright enough to read against dark backdrop
-              // but no longer a hard yellow band.
+              background: m.media ? "transparent" : halo.s1,
+              // No ring on collapsed nodes — the soft halo gradient is the
+              // only visual edge, so the photo blends smoothly into its glow.
               boxShadow: expanded
                 ? `0 18px 36px -10px hsl(0 0% 0% / 0.6)`
-                : `inset 0 0 0 1px ${halo.ring}`,
+                : "none",
               transition:
                 "width 500ms cubic-bezier(0.6,0,0.2,1), height 500ms cubic-bezier(0.6,0,0.2,1), border-radius 500ms cubic-bezier(0.6,0,0.2,1), opacity 400ms ease",
               opacity: dim ? 0.35 : scale.opacity,
@@ -825,6 +839,9 @@ const MemoryNode = memo(
 
 MemoryNode.displayName = "MemoryNode";
 
+// Stars are drawn dense for visual depth, but only ~25% twinkle. The rest are
+// static dots — basically free to render. This keeps the night-sky feel
+// without 100+ simultaneous keyframe animations chewing CPU.
 const Stars = ({ count }: { count: number }) => {
   const stars = useMemo(
     () =>
@@ -834,6 +851,7 @@ const Stars = ({ count }: { count: number }) => {
         left: Math.random() * 100,
         size: Math.random() * 1.6 + 0.4,
         delay: Math.random() * 4,
+        animated: i % 4 === 0, // every 4th star twinkles
       })),
     [count],
   );
@@ -850,7 +868,9 @@ const Stars = ({ count }: { count: number }) => {
             height: `${s.size}px`,
             background: "hsl(0 0% 100%)",
             opacity: 0.55,
-            animation: `star-flicker 3.6s ease-in-out ${s.delay}s infinite`,
+            animation: s.animated
+              ? `star-flicker 3.6s ease-in-out ${s.delay}s infinite`
+              : undefined,
           }}
         />
       ))}
