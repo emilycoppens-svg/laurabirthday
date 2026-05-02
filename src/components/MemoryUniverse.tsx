@@ -38,26 +38,26 @@ const LERP_TOUCH = 0.20;
 const OVERDRAG_RESISTANCE = 0.55;
 const RUBBERBAND_RETURN = 0.18;
 
-// Tone-tinted halo colors (used in a single radial-gradient background, NOT
-// box-shadow, for cheap GPU compositing).
-const TONE_HALO: Record<Tone, { core: string; mid: string; outer: string; ring: string }> = {
+// Tone-tinted halo colors. Three alpha-graded stops feed a multi-stop radial
+// gradient so the falloff reads as a soft glow rather than a hard disc → fade.
+const TONE_HALO: Record<Tone, { glow: string; glowSoft: string; glowFaint: string; ring: string }> = {
   sky: {
-    core:  "hsl(48 100% 92% / 1)",
-    mid:   "hsl(50 95% 75% / 0.55)",
-    outer: "hsl(195 80% 70% / 0)",
-    ring:  "hsl(48 100% 88%)",
+    glow:      "hsl(50 95% 78% / 0.45)",
+    glowSoft:  "hsl(50 95% 78% / 0.22)",
+    glowFaint: "hsl(195 80% 75% / 0.08)",
+    ring:      "hsl(48 100% 92% / 0.55)",
   },
   moss: {
-    core:  "hsl(50 100% 92% / 1)",
-    mid:   "hsl(50 90% 72% / 0.50)",
-    outer: "hsl(150 60% 55% / 0)",
-    ring:  "hsl(50 100% 88%)",
+    glow:      "hsl(50 90% 75% / 0.42)",
+    glowSoft:  "hsl(60 80% 75% / 0.20)",
+    glowFaint: "hsl(150 60% 65% / 0.08)",
+    ring:      "hsl(50 100% 92% / 0.50)",
   },
   peach: {
-    core:  "hsl(48 100% 94% / 1)",
-    mid:   "hsl(38 95% 72% / 0.55)",
-    outer: "hsl(28 85% 60% / 0)",
-    ring:  "hsl(48 100% 90%)",
+    glow:      "hsl(38 95% 75% / 0.45)",
+    glowSoft:  "hsl(38 95% 75% / 0.22)",
+    glowFaint: "hsl(28 85% 70% / 0.08)",
+    ring:      "hsl(48 100% 92% / 0.55)",
   },
 };
 
@@ -588,7 +588,7 @@ const MemoryUniverse = () => {
         cursor: "grab",
       }}
     >
-      <Stars count={100} />
+      <Stars count={60} />
 
       <div
         className="pointer-events-none absolute inset-0 opacity-60"
@@ -677,6 +677,41 @@ const MemoryUniverse = () => {
   );
 };
 
+// Renders a video that only plays when `active` is true. Avoids the perf
+// cost of multiple simultaneous decoders when many video nodes are on-screen.
+const VideoNode = ({
+  src,
+  poster,
+  active,
+}: {
+  src: string;
+  poster?: string;
+  active: boolean;
+}) => {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const v = ref.current;
+    if (!v) return;
+    if (active) {
+      v.play().catch(() => {});
+    } else {
+      v.pause();
+    }
+  }, [active]);
+  return (
+    <video
+      ref={ref}
+      src={src}
+      poster={poster}
+      muted
+      loop
+      playsInline
+      preload="metadata"
+      className="absolute inset-0 h-full w-full object-cover"
+    />
+  );
+};
+
 // Cheap halo — single radial-gradient background on a wrapper div behind the
 // thumbnail. Replaces the old triple-layered box-shadow which was the main
 // cause of jank on mobile (each shadow with 50px+ blur composites separately).
@@ -699,7 +734,11 @@ const MemoryNode = memo(
     const baseSize = m.media ? 88 : 36;
     const collapsedSize = baseSize * scale.size;
     // Halo wrapper extends well past the photo — controls the visual "glow size".
-    const haloSize = collapsedSize + 80 * scale.haloRadius;
+    // Wider envelope + multi-stop alpha gradient = softer, more atmospheric glow.
+    const haloSize = collapsedSize + 130 * scale.haloRadius;
+    // R = the photo's edge as a fraction of the halo's radius. Stops outside
+    // R% are visible glow; stops inside R% are hidden behind the photo.
+    const R = (collapsedSize / 2 / haloSize) * 100;
 
     const expanded = isExpanded;
 
@@ -717,7 +756,9 @@ const MemoryNode = memo(
         }}
       >
         <div className="relative" style={{ width: 96, height: 96 }}>
-          {/* Halo wrapper — single GPU-friendly radial gradient. */}
+          {/* Halo wrapper — single GPU-friendly radial gradient with a multi-
+              stop alpha falloff. Brightest right at the photo edge, then easing
+              through soft + faint stops out to fully transparent. */}
           {!expanded && (
             <div
               className="absolute left-1/2 top-1/2 pointer-events-none rounded-full"
@@ -726,10 +767,12 @@ const MemoryNode = memo(
                 height: haloSize,
                 transform: "translate(-50%, -50%)",
                 background: `radial-gradient(circle,
-                  ${halo.mid} 0%,
-                  ${halo.mid} ${(collapsedSize / 2 / haloSize) * 100}%,
-                  transparent 80%)`,
-                opacity: dim ? 0.25 : scale.opacity * 0.85,
+                  ${halo.glow} 0%,
+                  ${halo.glow} ${R}%,
+                  ${halo.glowSoft} ${R + (100 - R) * 0.35}%,
+                  ${halo.glowFaint} ${R + (100 - R) * 0.65}%,
+                  transparent 100%)`,
+                opacity: dim ? 0.25 : scale.opacity * 0.95,
                 transition: "opacity 400ms ease",
               }}
             />
@@ -743,11 +786,12 @@ const MemoryNode = memo(
               height: expanded ? "clamp(240px, 72vw, 320px)" : collapsedSize,
               transform: "translate(-50%, -50%)",
               borderRadius: expanded ? 22 : 9999,
-              background: m.media ? "transparent" : halo.mid,
-              // Single thin ring — much cheaper than triple box-shadow.
+              background: m.media ? "transparent" : halo.glow,
+              // Soft 1px ring — bright enough to read against dark backdrop
+              // but no longer a hard yellow band.
               boxShadow: expanded
                 ? `0 18px 36px -10px hsl(0 0% 0% / 0.6)`
-                : `inset 0 0 0 1.5px ${halo.ring}`,
+                : `inset 0 0 0 1px ${halo.ring}`,
               transition:
                 "width 500ms cubic-bezier(0.6,0,0.2,1), height 500ms cubic-bezier(0.6,0,0.2,1), border-radius 500ms cubic-bezier(0.6,0,0.2,1), opacity 400ms ease",
               opacity: dim ? 0.35 : scale.opacity,
@@ -759,19 +803,17 @@ const MemoryNode = memo(
                 alt=""
                 className="absolute inset-0 h-full w-full object-cover"
                 loading="lazy"
+                decoding="async"
                 draggable={false}
               />
             )}
             {m.media?.type === "video" && (
-              <video
+              <VideoNode
                 src={m.media.src}
                 poster={m.media.poster}
-                autoPlay
-                muted
-                loop
-                playsInline
-                preload="metadata"
-                className="absolute inset-0 h-full w-full object-cover"
+                // Only the anchor video plays continuously. Others stay paused
+                // (decoding metadata only) until the user taps to expand them.
+                active={m.role === "anchor" || expanded}
               />
             )}
           </div>
