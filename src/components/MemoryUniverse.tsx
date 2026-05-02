@@ -38,33 +38,35 @@ const LERP_TOUCH = 0.20;
 const OVERDRAG_RESISTANCE = 0.55;
 const RUBBERBAND_RETURN = 0.18;
 
-// Tone-tinted halo colors. Five alpha-graded stops feed a radial gradient that
-// fades exponentially from the photo edge — never solid, never with a visible
-// outer ring. Inner stops keep low alpha so the glow blurs off the photo
-// instead of sitting around it as a bright disc.
+// Tone-tinted halo colors. Bright warm-yellow bloom right at the photo edge
+// (s1) drops fast through s2 → s3 → 0 by s5. Reads as a small yellow ring
+// hugging the photo, then a soft fade to nothing — no outer boundary.
 const TONE_HALO: Record<Tone, {
-  s1: string; s2: string; s3: string; s4: string; s5: string;
+  s1: string; s2: string; s3: string; s4: string; s5: string; s6: string;
 }> = {
   sky: {
-    s1: "hsl(50 95% 80% / 0.28)",
-    s2: "hsl(50 95% 80% / 0.18)",
-    s3: "hsl(50 90% 78% / 0.10)",
-    s4: "hsl(195 75% 75% / 0.04)",
+    s1: "hsl(48 100% 78% / 0.70)",
+    s2: "hsl(50 95% 78% / 0.32)",
+    s3: "hsl(52 90% 76% / 0.10)",
+    s4: "hsl(195 75% 75% / 0.02)",
     s5: "hsl(195 75% 75% / 0)",
+    s6: "hsl(195 75% 75% / 0)",
   },
   moss: {
-    s1: "hsl(55 90% 78% / 0.26)",
-    s2: "hsl(55 85% 78% / 0.16)",
-    s3: "hsl(80 60% 70% / 0.09)",
-    s4: "hsl(150 55% 60% / 0.04)",
+    s1: "hsl(50 100% 78% / 0.66)",
+    s2: "hsl(55 90% 78% / 0.30)",
+    s3: "hsl(80 65% 72% / 0.10)",
+    s4: "hsl(150 55% 60% / 0.02)",
     s5: "hsl(150 55% 60% / 0)",
+    s6: "hsl(150 55% 60% / 0)",
   },
   peach: {
-    s1: "hsl(38 95% 78% / 0.28)",
-    s2: "hsl(38 95% 78% / 0.18)",
-    s3: "hsl(34 90% 75% / 0.10)",
-    s4: "hsl(28 80% 70% / 0.04)",
+    s1: "hsl(42 100% 78% / 0.70)",
+    s2: "hsl(38 95% 76% / 0.32)",
+    s3: "hsl(34 90% 74% / 0.10)",
+    s4: "hsl(28 80% 70% / 0.02)",
     s5: "hsl(28 80% 70% / 0)",
+    s6: "hsl(28 80% 70% / 0)",
   },
 };
 
@@ -684,8 +686,10 @@ const MemoryUniverse = () => {
   );
 };
 
-// Renders a video that only plays when `active` is true. Avoids the perf
-// cost of multiple simultaneous decoders when many video nodes are on-screen.
+// Renders a video that only plays when `active` is true. Inactive videos
+// briefly play() to render their first frame, then pause — otherwise paused
+// `<video>` elements show nothing (just transparent space). The first-frame
+// trick gives every node a visible thumbnail without keeping decoders busy.
 const VideoNode = ({
   src,
   poster,
@@ -699,11 +703,19 @@ const VideoNode = ({
   useEffect(() => {
     const v = ref.current;
     if (!v) return;
-    if (active) {
-      v.play().catch(() => {});
-    } else {
-      v.pause();
-    }
+    let cancelled = false;
+    // Always play() first — this loads enough data to render the first frame.
+    // If we want it paused, we pause AFTER the play promise resolves so a
+    // frame has been painted. Muted videos satisfy autoplay policies.
+    v.play()
+      .then(() => {
+        if (cancelled) return;
+        if (!active) v.pause();
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [active]);
   return (
     <video
@@ -713,7 +725,7 @@ const VideoNode = ({
       muted
       loop
       playsInline
-      preload="metadata"
+      preload="auto"
       className="absolute inset-0 h-full w-full object-cover"
     />
   );
@@ -740,19 +752,22 @@ const MemoryNode = memo(
 
     const baseSize = m.media ? 88 : 36;
     const collapsedSize = baseSize * scale.size;
-    // Halo wrapper extends moderately past the photo — narrower than before so
-    // the falloff feels close to the photo, not like a bright surrounding ring.
-    const haloSize = collapsedSize + 70 * scale.haloRadius;
-    // R = the photo's edge as a fraction of the halo's radius. Stops inside
-    // R% are hidden behind the photo; the visible glow lives between R and 100.
+    // Tight halo — the visible glow only extends ~40% of the photo radius
+    // past the edge. A bigger wrapper just gives buffer space so the gradient
+    // can reach fully transparent (alpha=0) WELL before the outer edge of the
+    // div. That's what removes the visible bubble outline against the sky.
+    const haloSize = collapsedSize + 60 * scale.haloRadius;
     const R = (collapsedSize / 2 / haloSize) * 100;
-    // Pre-compute the five stop positions so the falloff curve is smooth.
     const reach = 100 - R;
+    // Tight bloom near the photo: bright yellow ring lives in the first ~25%
+    // of the reach, fading to nothing by ~70%. The remainder of the wrapper
+    // is fully transparent so no outer boundary is visible.
     const p1 = R;
-    const p2 = R + reach * 0.18;
-    const p3 = R + reach * 0.40;
-    const p4 = R + reach * 0.68;
-    const p5 = 100;
+    const p2 = R + reach * 0.08;
+    const p3 = R + reach * 0.22;
+    const p4 = R + reach * 0.48;
+    const p5 = R + reach * 0.70;
+    const p6 = 100;
 
     const expanded = isExpanded;
 
@@ -785,14 +800,18 @@ const MemoryNode = memo(
                   ${halo.s2} ${p2}%,
                   ${halo.s3} ${p3}%,
                   ${halo.s4} ${p4}%,
-                  ${halo.s5} ${p5}%)`,
+                  ${halo.s5} ${p5}%,
+                  ${halo.s6} ${p6}%)`,
                 opacity: dim ? 0.25 : scale.opacity,
                 transition: "opacity 400ms ease",
               }}
             />
           )}
 
-          {/* Photo thumbnail — collapsed = circle, expanded = rounded square */}
+          {/* Photo thumbnail — collapsed = circle, expanded = rounded square.
+              When collapsed, a radial mask feathers the outermost ~10% of the
+              photo so its edge melts into the surrounding halo instead of
+              presenting a hard circular outline. */}
           <div
             className="absolute left-1/2 top-1/2 overflow-hidden"
             style={{
@@ -801,11 +820,19 @@ const MemoryNode = memo(
               transform: "translate(-50%, -50%)",
               borderRadius: expanded ? 22 : 9999,
               background: m.media ? "transparent" : halo.s1,
-              // No ring on collapsed nodes — the soft halo gradient is the
-              // only visual edge, so the photo blends smoothly into its glow.
               boxShadow: expanded
                 ? `0 18px 36px -10px hsl(0 0% 0% / 0.6)`
                 : "none",
+              // Subtle edge feather: the inner ~70% of the photo stays fully
+              // opaque (so the image is clearly readable); only the outer 30%
+              // gradually fades, letting the photo edge melt into the halo
+              // instead of presenting a hard circle.
+              maskImage: expanded
+                ? undefined
+                : "radial-gradient(circle, black 70%, transparent 100%)",
+              WebkitMaskImage: expanded
+                ? undefined
+                : "radial-gradient(circle, black 70%, transparent 100%)",
               transition:
                 "width 500ms cubic-bezier(0.6,0,0.2,1), height 500ms cubic-bezier(0.6,0,0.2,1), border-radius 500ms cubic-bezier(0.6,0,0.2,1), opacity 400ms ease",
               opacity: dim ? 0.35 : scale.opacity,
