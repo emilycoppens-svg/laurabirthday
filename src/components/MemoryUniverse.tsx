@@ -118,6 +118,36 @@ const memories: Memory[] = [
   { id: "m30", x: 1740, y: 920,  tone: "moss",  role: "regular", media: { type: "image", src: "/memories/IMG_8450.jpeg" } },
   { id: "m31", x: 1520, y: 970,  tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_8500.jpeg" } },
   { id: "m32", x: 1680, y: 1010, tone: "peach", role: "regular", media: { type: "image", src: "/memories/IMG_8884.jpeg" } },
+
+  // ───── New nodes ─────
+  // Connectors between N clusters
+  { id: "m33", x: 600,  y: 200,  tone: "moss",  role: "regular", media: { type: "image", src: "/memories/IMG_0034.jpeg" } },
+  { id: "m34", x: 1250, y: 220,  tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_0104.jpeg" } },
+
+  // Upper mid-band (between N clusters and anchor)
+  { id: "m35", x: 460,  y: 400,  tone: "peach", role: "regular", media: { type: "image", src: "/memories/IMG_8452.jpeg" } },
+  { id: "m36", x: 1450, y: 400,  tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_8465.jpeg" } },
+  { id: "m37", x: 950,  y: 380,  tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_3915.jpeg" } },
+  { id: "m38", x: 1130, y: 380,  tone: "moss",  role: "regular", media: { type: "image", src: "/memories/340CA33A-DA6D-4865-ACE8-AA7B0C4938DF.jpg" } },
+
+  // Mid-band ring around the anchor (videos as wandering moments)
+  { id: "m39", x: 240,  y: 580,  tone: "peach", role: "regular", media: { type: "image", src: "/memories/IMG_7836.jpeg" } },
+  { id: "m40", x: 700,  y: 480,  tone: "sky",   role: "regular", media: { type: "video", src: "/memories/IMG_1627.mov" } },
+  { id: "m41", x: 1200, y: 480,  tone: "peach", role: "regular", media: { type: "video", src: "/memories/IMG_2450.mov" } },
+  { id: "m42", x: 1700, y: 590,  tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_7869.jpeg" } },
+  { id: "m43", x: 1550, y: 530,  tone: "moss",  role: "regular", media: { type: "video", src: "/memories/IMG_1470.mov" } },
+
+  // Lower mid-band (between anchor and S clusters)
+  { id: "m44", x: 580,  y: 720,  tone: "moss",  role: "regular", media: { type: "image", src: "/memories/IMG_2464.jpeg" } },
+  { id: "m45", x: 380,  y: 720,  tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_8540.jpeg" } },
+  { id: "m46", x: 800,  y: 760,  tone: "moss",  role: "regular", media: { type: "image", src: "/memories/IMG_8436.jpeg" } },
+  { id: "m47", x: 1100, y: 740,  tone: "moss",  role: "regular", media: { type: "image", src: "/memories/IMG_6271.jpeg" } },
+  { id: "m48", x: 1340, y: 720,  tone: "peach", role: "regular", media: { type: "image", src: "/memories/IMG_3460.jpeg" } },
+  { id: "m49", x: 1620, y: 720,  tone: "peach", role: "regular", media: { type: "image", src: "/memories/IMG_8623.jpeg" } },
+
+  // Just below the anchor
+  { id: "m50", x: 950,  y: 750,  tone: "moss",  role: "regular", media: { type: "video", src: "/memories/IMG_8498.mov" } },
+  { id: "m51", x: 290,  y: 450,  tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_1447.jpeg" } },
 ];
 
 memories.forEach((m) => {
@@ -133,6 +163,25 @@ const edges: [string, string][] = [
   ["m28","m29"], ["m29","m30"], ["m28","m31"], ["m30","m32"], ["m31","m32"], ["m29","m31"],
   ["m5","m6"], ["m8","m11"], ["m4","m17"], ["m10","m23"], ["m13","m28"], ["m20","m22"], ["m27","m30"],
   ["m16","m4"], ["m16","m9"], ["m16","m14"], ["m16","m20"], ["m16","m23"], ["m16","m30"],
+
+  // ───── Edges for the new nodes ─────
+  // N-band connectors
+  ["m33","m5"], ["m33","m6"], ["m34","m8"], ["m34","m11"],
+  // Upper mid-band into N clusters and anchor
+  ["m35","m5"], ["m35","m51"], ["m51","m1"],
+  ["m36","m11"], ["m36","m43"],
+  ["m37","m9"], ["m37","m38"], ["m38","m10"],
+  ["m37","m16"], ["m38","m16"],
+  // Mid-band ring around anchor
+  ["m39","m51"], ["m39","m17"],
+  ["m40","m37"], ["m40","m16"], ["m41","m38"], ["m41","m16"],
+  ["m42","m13"], ["m42","m43"], ["m43","m41"],
+  // Lower mid-band into S clusters
+  ["m44","m45"], ["m44","m46"], ["m45","m17"],
+  ["m46","m22"], ["m46","m50"], ["m47","m24"], ["m47","m48"],
+  ["m48","m28"], ["m49","m29"], ["m49","m42"],
+  // Anchor to lower-mid
+  ["m50","m16"], ["m50","m23"],
 ];
 
 const MemoryUniverse = () => {
