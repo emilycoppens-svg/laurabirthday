@@ -257,6 +257,10 @@ const MemoryUniverse = () => {
     let dragging = false;
     let startTargetX = 0;
     let startTargetY = 0;
+    // Pointer position at drag start. Stable — does NOT roll with the velocity
+    // sample window the way samples.current[0] does.
+    let dragStartX = 0;
+    let dragStartY = 0;
 
     const pointers = new Map<number, { x: number; y: number }>();
     let pinchStart: {
@@ -319,6 +323,8 @@ const MemoryUniverse = () => {
       recordSample(e.clientX, e.clientY);
       startTargetX = target.current.x;
       startTargetY = target.current.y;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
     };
 
     const onPointerMove = (e: PointerEvent) => {
@@ -351,11 +357,11 @@ const MemoryUniverse = () => {
       }
 
       if (!dragging) return;
-      if (samples.current.length === 0) return;
 
-      const first = samples.current[0];
-      const dx = e.clientX - first.x;
-      const dy = e.clientY - first.y;
+      // Drag offset is measured against the STABLE pointerdown position so the
+      // world doesn't drift as the velocity sample window rolls.
+      const dx = e.clientX - dragStartX;
+      const dy = e.clientY - dragStartY;
 
       const moved = Math.hypot(dx, dy);
       if (moved <= DRAG_THRESHOLD) {
@@ -371,6 +377,11 @@ const MemoryUniverse = () => {
       };
       target.current.x = dampAxis(startTargetX + dx, max.x);
       target.current.y = dampAxis(startTargetY + dy, max.y);
+
+      // Snap current to target while dragging — no lerp. Lerp during active
+      // drag is what makes the world feel like it's chasing the finger.
+      current.current.x = target.current.x;
+      current.current.y = target.current.y;
 
       recordSample(e.clientX, e.clientY);
       ensureRunning();
@@ -391,6 +402,8 @@ const MemoryUniverse = () => {
           recordSample(remaining.x, remaining.y);
           startTargetX = target.current.x;
           startTargetY = target.current.y;
+          dragStartX = remaining.x;
+          dragStartY = remaining.y;
         }
         return;
       }
