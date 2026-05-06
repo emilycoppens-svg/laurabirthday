@@ -791,8 +791,10 @@ const VideoNode = ({
 };
 
 // Cheap halo — single radial-gradient background on a wrapper div behind the
-// thumbnail. Replaces the old triple-layered box-shadow which was the main
-// cause of jank on mobile (each shadow with 50px+ blur composites separately).
+// thumbnail. Halos are always rendered (lightweight), but the actual media
+// (image/video) only mounts once the node has scrolled into the viewport, and
+// videos only play while currently visible. This keeps the constellation
+// visible everywhere while limiting concurrent decoders + image decode work.
 const MemoryNode = memo(
   ({
     m,
@@ -808,6 +810,29 @@ const MemoryNode = memo(
     const dim = isAnyExpanded && !isExpanded;
     const halo = TONE_HALO[m.tone];
     const scale = ROLE_SCALE[m.role];
+
+    // Visibility tracking via IntersectionObserver. `inView` controls
+    // play/pause for videos; `loaded` becomes true the first time we're
+    // visible and stays true so we don't re-fetch when scrolling back.
+    const wrapperRef = useRef<HTMLDivElement>(null);
+    const [inView, setInView] = useState(false);
+    const [loaded, setLoaded] = useState(false);
+    useEffect(() => {
+      const el = wrapperRef.current;
+      if (!el) return;
+      const io = new IntersectionObserver(
+        ([entry]) => {
+          const visible = entry.isIntersecting;
+          setInView(visible);
+          if (visible) setLoaded(true);
+        },
+        // 200px margin: start loading just before a node enters view, keep
+        // playing for a moment after it exits — feels less abrupt.
+        { rootMargin: "200px" },
+      );
+      io.observe(el);
+      return () => io.disconnect();
+    }, []);
 
     const baseSize = m.media ? 88 : 36;
     const collapsedSize = baseSize * scale.size;
@@ -832,6 +857,7 @@ const MemoryNode = memo(
 
     return (
       <div
+        ref={wrapperRef}
         className="absolute -translate-x-1/2 -translate-y-1/2"
         style={{
           left: m.x,
@@ -897,7 +923,9 @@ const MemoryNode = memo(
               opacity: dim ? 0.35 : scale.opacity,
             }}
           >
-            {m.media?.type === "image" && (
+            {/* Media mounts only after the node has been seen at least once.
+                Once mounted it stays mounted (so scrolling back doesn't refetch). */}
+            {loaded && m.media?.type === "image" && (
               <img
                 src={m.media.src}
                 alt=""
@@ -907,13 +935,13 @@ const MemoryNode = memo(
                 draggable={false}
               />
             )}
-            {m.media?.type === "video" && (
+            {loaded && m.media?.type === "video" && (
               <VideoNode
                 src={m.media.src}
                 poster={m.media.poster}
-                // Only the anchor video plays continuously. Others stay paused
-                // (decoding metadata only) until the user taps to expand them.
-                active={m.role === "anchor" || expanded}
+                // Play only while in view (or expanded). Off-screen videos
+                // pause to free decoder resources.
+                active={inView || expanded}
               />
             )}
           </div>
