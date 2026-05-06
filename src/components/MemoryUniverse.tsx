@@ -157,6 +157,42 @@ const memories: Memory[] = [
   // Just below the anchor
   { id: "m50", x: 950,  y: 750,  tone: "moss",  role: "regular", media: { type: "video", src: "/memories/IMG_8498.mov" } },
   { id: "m51", x: 290,  y: 450,  tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_1447.jpeg" } },
+
+  // ───── Newest batch (m52–m70) — fill the world's edges and gaps ─────
+  // Outer-edge atmosphere, left & right margins
+  { id: "m52", x: 110,  y: 380,  tone: "peach", role: "regular", media: { type: "image", src: "/memories/IMG_0125.jpeg" } },
+  { id: "m53", x: 110,  y: 700,  tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_0133.jpeg" } },
+  { id: "m54", x: 1810, y: 380,  tone: "moss",  role: "regular", media: { type: "image", src: "/memories/IMG_0148.jpeg" } },
+  { id: "m55", x: 1810, y: 700,  tone: "peach", role: "regular", media: { type: "image", src: "/memories/IMG_0150.jpeg" } },
+
+  // Upper mid-band gap fillers
+  { id: "m56", x: 640,  y: 340,  tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_0151.jpeg" } },
+  { id: "m57", x: 1340, y: 340,  tone: "moss",  role: "regular", media: { type: "image", src: "/memories/IMG_0152.jpeg" } },
+
+  // Anchor ring (above + flanks)
+  { id: "m58", x: 820,  y: 460,  tone: "peach", role: "regular", media: { type: "video", src: "/memories/IMG_0116.mov" } },
+  { id: "m59", x: 1080, y: 460,  tone: "sky",   role: "regular", media: { type: "video", src: "/memories/IMG_0117.mov" } },
+  { id: "m60", x: 1320, y: 600,  tone: "moss",  role: "regular", media: { type: "image", src: "/memories/IMG_0159.jpeg" } },
+
+  // Below-anchor band
+  { id: "m61", x: 820,  y: 660,  tone: "sky",   role: "regular", media: { type: "video", src: "/memories/IMG_0153.mov" } },
+  { id: "m62", x: 1080, y: 660,  tone: "moss",  role: "regular", media: { type: "video", src: "/memories/IMG_0155.mov" } },
+
+  // Lower-mid extras near edges
+  { id: "m63", x: 180,  y: 880,  tone: "peach", role: "regular", media: { type: "image", src: "/memories/IMG_0160.jpeg" } },
+  { id: "m64", x: 1810, y: 880,  tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_0163.jpeg" } },
+
+  // Mid-band fillers between clusters
+  { id: "m65", x: 540,  y: 580,  tone: "moss",  role: "regular", media: { type: "video", src: "/memories/IMG_0181.mov" } },
+  { id: "m66", x: 1380, y: 460,  tone: "peach", role: "regular", media: { type: "video", src: "/memories/IMG_8962.mov" } },
+
+  // Sparse top-of-world atmosphere
+  { id: "m67", x: 1370, y: 60,   tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_8944.jpeg" } },
+  { id: "m68", x: 540,  y: 70,   tone: "peach", role: "regular", media: { type: "image", src: "/memories/IMG_8946.jpeg" } },
+
+  // Bottom-of-world atmosphere
+  { id: "m69", x: 720,  y: 1080, tone: "moss",  role: "regular", media: { type: "image", src: "/memories/b5ea76f7-5d32-49c0-8486-584b80b4889d.jpg" } },
+  { id: "m70", x: 1280, y: 1080, tone: "sky",   role: "regular", media: { type: "image", src: "/memories/IMG_0121 2.jpeg" } },
 ];
 
 memories.forEach((m) => {
@@ -191,6 +227,29 @@ const edges: [string, string][] = [
   ["m48","m28"], ["m49","m29"], ["m49","m42"],
   // Anchor to lower-mid
   ["m50","m16"], ["m50","m23"],
+
+  // ───── m52–m70 edges ─────
+  // Outer edges into nearby clusters
+  ["m52","m51"], ["m52","m1"], ["m53","m17"], ["m53","m21"],
+  ["m54","m13"], ["m54","m36"], ["m55","m42"], ["m55","m30"],
+  // Upper mid-band fillers
+  ["m56","m33"], ["m56","m6"], ["m57","m34"], ["m57","m11"],
+  // Anchor ring
+  ["m58","m37"], ["m58","m16"], ["m58","m65"],
+  ["m59","m38"], ["m59","m16"], ["m59","m66"],
+  ["m60","m43"], ["m60","m41"], ["m60","m47"],
+  // Below-anchor band
+  ["m61","m16"], ["m61","m22"], ["m61","m46"],
+  ["m62","m16"], ["m62","m24"], ["m62","m47"],
+  // Lower-mid edges
+  ["m63","m21"], ["m63","m45"], ["m64","m30"], ["m64","m49"],
+  // Inner mid extras
+  ["m65","m39"], ["m65","m51"], ["m65","m44"],
+  ["m66","m43"], ["m66","m36"], ["m66","m41"],
+  // Top-of-world atmosphere into N clusters
+  ["m67","m11"], ["m67","m12"], ["m68","m6"], ["m68","m33"],
+  // Bottom-of-world into S clusters
+  ["m69","m25"], ["m69","m26"], ["m70","m26"], ["m70","m32"],
 ];
 
 const MemoryUniverse = () => {
